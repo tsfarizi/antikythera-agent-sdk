@@ -14,12 +14,24 @@ For WASM execution support:
 pip install antikythera-agent[wasm]
 ```
 
+## Namespaces
+
+- `antikythera_agent.core` — stable core (Agent, Orchestrator, SessionManager, PromptManager, types, get_version) — zero extra dependencies
+- `antikythera_agent.plugin` — optional, wasm-heavy (WasmRuntime) — requires `wasmtime` via `pip install antikythera-agent[wasm]`
+
+The root `antikythera_agent` re-exports both for backward compatibility (`from antikythera_agent import Agent` still works). New code should prefer the split imports:
+
+```python
+from antikythera_agent.core import Agent, Orchestrator, PromptManager
+from antikythera_agent.plugin import WasmRuntime
+```
+
 ## Quick Start
 
 ### Create an Agent
 
 ```python
-from antikythera_agent import Agent
+from antikythera_agent.core import Agent
 from antikythera_agent.server.provider import StubProvider
 
 agent = Agent(
@@ -37,7 +49,7 @@ Without a `provider_resolver`, the built-in registry is used (default providers:
 ### Multi-Agent Orchestration
 
 ```python
-from antikythera_agent import AgentProfileConfig, Orchestrator, PromptManager, PromptConfig
+from antikythera_agent.core import AgentProfileConfig, Orchestrator, PromptManager, PromptConfig
 
 prompts = PromptManager()
 prompts.register(PromptConfig(
@@ -82,7 +94,7 @@ Dispatch runs the local tool loop host-side on a fresh `WasmRuntime` per task; `
 ### WASM Runtime (Server-Side)
 
 ```python
-from antikythera_agent import WasmRuntime
+from antikythera_agent.plugin import WasmRuntime
 
 runtime = WasmRuntime()
 result = runtime.call_checked("init", '{"max_steps": 10}')
@@ -148,7 +160,7 @@ Wire contract: `documentation/WIRE_PROTOCOL.md`; decision register: `documentati
 ### Load Prompts from JSON
 
 ```python
-from antikythera_agent import PromptManager
+from antikythera_agent.core import PromptManager
 
 # Load from file
 prompts = PromptManager.from_file("prompts.json")

@@ -15,10 +15,14 @@
     "orchestrator.js",
     "README.md",
     "component",
-    "runtime"
+    "runtime",
+    "core",
+    "plugin"
   ],
   "exports": {
     ".": { "types": "./index.d.ts", "default": "./index.js" },
+    "./core": { "types": "./core/index.d.ts", "default": "./core/index.js" },
+    "./plugin": { "types": "./plugin/index.d.ts", "default": "./plugin/index.js" },
     "./runtime": {
       "types": "./runtime/index.d.ts",
       "default": "./runtime/index.js"
