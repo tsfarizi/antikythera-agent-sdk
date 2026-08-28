@@ -12,24 +12,28 @@ Example:
     ...     name="Assistant",
     ...     content="You are a helpful assistant.",
     ... ))
-    >>> agent = Agent(provider="openai", model="gpt-4o", system_prompt=prompts.get_content("assistant"))
+    >>> agent = Agent(
+    ...     provider="openai",
+    ...     model="gpt-4o",
+    ...     system_prompt=prompts.get_content("assistant"),
+    ... )
     >>> result = agent.run("Hello, how can you help me?")
     >>> print(result.output)
 """
 
 from antikythera_agent.agent import Agent
 from antikythera_agent.orchestrator import Orchestrator
-from antikythera_agent.session import SessionManager
-from antikythera_agent.prompts import PromptManager, PromptConfig
+from antikythera_agent.prompts import PromptConfig, PromptManager
 from antikythera_agent.runtime import WasmRuntime, WasmRuntimeError
+from antikythera_agent.session import SessionManager
 from antikythera_agent.types import (
     AgentConfig,
-    AgentResult,
     AgentProfileConfig,
-    TaskResult,
-    PipelineResult,
+    AgentResult,
     OrchestratorConfig,
+    PipelineResult,
     SessionInfo,
+    TaskResult,
 )
 from antikythera_agent.utils import get_version
 

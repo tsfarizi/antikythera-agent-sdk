@@ -69,7 +69,7 @@ from antikythera_agent.server import (
 from antikythera_agent.server.loop_owner import ToolLoopConfig
 
 _PYTHON_SRC = Path(__file__).resolve().parents[1]
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _GOLDEN_PATH = _REPO_ROOT / "contracts" / "shared" / "wire_protocol.golden.json"
 GOLDEN = json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))

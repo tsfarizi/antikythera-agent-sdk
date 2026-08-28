@@ -26,7 +26,7 @@ import json
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from .bridge import SERVER_TOOL_DESCRIPTION, AgentServerOptions, createAgentServer
 from .provider import StubProvider
@@ -139,7 +139,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     server = None
     try:
         bind, port = parse_bind(args.bind)
-        providers = None
+        providers: Optional[Dict[str, Any]] = None
         if args.provider_stub is not None:
             # Mirror main.rs: --provider-stub mengganti provider "stub"
             # (StubProvider) dan menjadikannya default.

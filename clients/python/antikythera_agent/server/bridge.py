@@ -43,10 +43,9 @@ Amplop runtime:
 from __future__ import annotations
 
 import ipaddress
-import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from .component import ComponentServer
 from .control import ControlChannel

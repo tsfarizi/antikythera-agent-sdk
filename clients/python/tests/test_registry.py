@@ -40,7 +40,7 @@ from antikythera_agent.server.registry import UnionRegistry
 from antikythera_agent.server.wire import WIRE
 
 _GOLDEN_PATH = (
-    Path(__file__).resolve().parents[2] / "contracts" / "shared" / "wire_protocol.golden.json"
+    Path(__file__).resolve().parents[3] / "contracts" / "shared" / "wire_protocol.golden.json"
 )
 
 GOLDEN = json.loads(_GOLDEN_PATH.read_text(encoding="utf-8"))

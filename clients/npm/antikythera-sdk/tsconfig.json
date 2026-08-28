@@ -1,9 +1,8 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "strict": false,
+    "strict": true,
     "allowJs": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -14,9 +13,6 @@
   },
   "include": [
     "index.d.ts",
-    "runtime/**/*.d.ts",
-    "test/shims/**/*.ts",
-    "test/shims/**/*.d.ts",
-    "test/types/**/*.ts"
+    "runtime/**/*.d.ts"
   ]
 }

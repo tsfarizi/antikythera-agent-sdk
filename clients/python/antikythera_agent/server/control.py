@@ -299,6 +299,10 @@ class ControlChannel:
                 )
             if pending.resolved:
                 self._pending.pop(correlation_id, None)
+                if pending.result is None:
+                    raise ValueError(
+                        f"control: resolved pending '{correlation_id}' has no result"
+                    )
                 return pending.result
             remaining = pending.deadline - time.monotonic()
         wait_secs = min(timeout_secs, max(remaining, 0.0))
@@ -322,6 +326,10 @@ class ControlChannel:
             # akan menyingkirkan entri yang masih valid di antara resolve
             # dan pop ini karena wait_secs dibatasi oleh sisa TTL.
             self._pending.pop(correlation_id, None)
+        if pending.result is None:
+            raise ValueError(
+                f"control: pending '{correlation_id}' resolved with no result"
+            )
         return pending.result
 
     def pending_len(self) -> int:

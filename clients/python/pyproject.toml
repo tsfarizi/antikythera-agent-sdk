@@ -52,32 +52,11 @@ target-version = "py39"
 select = ["F", "E", "W", "I"]
 
 [tool.ruff.lint.per-file-ignores]
-# Production code is frozen for packaging work; every entry below lists exactly
-# the rule classes observed at gate-introduction time (no blanket disables).
-# `uph-unit` marks debt owned by another unit (do not fix here).
-"antikythera_agent/__init__.py" = ["E501", "I001"] # docstring example line + legacy import order
-"antikythera_agent/__init__.pyi" = ["I001"] # stub re-export order mirrors __init__.py
-"antikythera_agent/agent.py" = ["F401", "I001"] # unused Path/Any kept by owner unit
-"antikythera_agent/orchestrator.py" = ["F401", "I001"] # unused Path kept by owner unit
-"antikythera_agent/types.py" = ["F401"] # unused dataclasses.field kept by owner unit
-"antikythera_agent/server/bridge.py" = ["F401"] # unused threading/Tuple kept by owner unit
-"antikythera_agent/server/transport.py" = ["I001"] # wire-module import order pinned by owner unit
-# Test suite mirrors byte-exact golden wire fixtures; long literal lines and
-# import blocks shaped like the mirrored Rust lane are intentional.
+# Golden wire fixtures are byte-exact and intentionally exceed line length / import order.
 "tests/*" = ["E501", "I001"]
 
 [tool.mypy]
 python_version = "3.9"
 ignore_missing_imports = true
 allow_redefinition = true
-check_untyped_defs = false
-
-[[tool.mypy.overrides]]
-# uph-unit: frozen production modules owned by other units. Each disabled code
-# below matches concrete findings at gate-introduction time (no blanket skips):
-# control.py   -> two `dict | None` returns on miss paths
-# transport.py -> optional-transport dispatch table + handler return unions
-# __main__.py  -> StubProvider dict fed into the provider option union
-# orchestrator.py -> _classify_loop_error Optional[str] fed into TaskResult.error_kind Literal union
-module = ["antikythera_agent.server.control", "antikythera_agent.server.transport", "antikythera_agent.server.__main__", "antikythera_agent.orchestrator"]
-disable_error_code = ["return-value", "union-attr", "list-item", "arg-type"]
+check_untyped_defs = true

@@ -57,12 +57,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from . import wire as wire_module
 from .component import BASE_PATH, MANIFEST_PATH, ComponentServer
 from .control import ControlChannel
 from .gate import PermissionDeniedError, PolicyGate
 from .provider import LlmProvider, resolve_provider
 from .registry import UnionRegistry
-from . import wire as wire_module
 
 logger = logging.getLogger(__name__)
 
@@ -407,7 +407,10 @@ class ThreadingHttpTransport(Transport):
         """Alamat terikat, atau None sebelum `start`/`serve_forever`."""
         if self._server is None:
             return None
-        return self._server.server_address
+        addr: Any = self._server.server_address
+        if isinstance(addr, tuple) and len(addr) >= 2:
+            return (str(addr[0]), int(addr[1]))
+        return None
 
     def stop(self) -> None:
         """Shutdown server + tutup socket + join thread (idempotent)."""
@@ -447,9 +450,14 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self) -> None:
         transport = self.transport
+        if transport is None:
+            self._send_json(500, {"error": "transport not configured"})
+            return
         parsed = urlsplit(self.path)
         path = unquote(parsed.path)  # kontrak U22: decode SEBELUM resolve
         query = parse_qs(parsed.query, keep_blank_values=True)
+        status: int
+        body: Any
         try:
             if path == wire_module.WIRE["TOOLS_LIST"]:
                 status, body = transport.handle_tools_list()
@@ -497,7 +505,12 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
         if not client_id.strip():
             self._send_json(400, ERROR_CLIENT_ID_REQUIRED)
             return
-        session_id = (query.get("session_id") or [None])[0]
+        sid_values = query.get("session_id")
+        session_id: Optional[str] = sid_values[0] if sid_values else None
+        transport = self.transport
+        if transport is None:
+            self._send_json(500, {"error": "transport not configured"})
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -505,7 +518,7 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
         # Writer dikunci per koneksi + flush per frame: kontrak control.py
         # (dipanggil dari keepalive/lifecycle/llm-token threads).
-        self.transport.handle_events(
+        transport.handle_events(
             client_id, session_id, self._make_sse_writer(), self._sse_read
         )
 
@@ -529,7 +542,11 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
         return line if line else None
 
     def _handle_component_file(self, rel_path: str) -> None:
-        result = self.transport.handle_component_path(rel_path)
+        transport = self.transport
+        if transport is None:
+            self._send_json(500, {"error": "transport not configured"})
+            return
+        result = transport.handle_component_path(rel_path)
         if result is None:
             self._send_json(404, ERROR_NOT_FOUND)
             return

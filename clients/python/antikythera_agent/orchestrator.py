@@ -21,7 +21,7 @@ import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from antikythera_agent.local_loop import (
     LocalLoopConfig,
@@ -61,7 +61,9 @@ def _default_provider_resolver(name: Optional[str] = None) -> Any:
     return provider.resolve_provider(name)
 
 
-def _classify_loop_error(exc: BaseException) -> Optional[str]:
+def _classify_loop_error(
+    exc: BaseException,
+) -> Optional[Literal["transient", "permanent", "cancelled"]]:
     """Peta exception loop -> `error_kind` tabel E2.4.
 
     Loop membungkus kegagalan internal menjadi `ToolLoopError(...) from exc`,
@@ -69,7 +71,7 @@ def _classify_loop_error(exc: BaseException) -> Optional[str]:
     sebagai fallback untuk varian `ToolLoopError` tanpa cause bertipe
     (denial routing, max_steps, retry). Return `None` bila tak ada baris tabel
     yang cocok — jenis baru tidak boleh direka (R7).
-    """
+     """
     current: Optional[BaseException] = exc
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
