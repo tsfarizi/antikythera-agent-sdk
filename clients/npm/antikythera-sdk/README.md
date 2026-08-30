@@ -140,6 +140,21 @@ const prompts = PromptManager.fromFile('prompts.json');
 const prompts = PromptManager.fromJSON('[{"id":"agent","name":"Agent","content":"You are helpful."}]');
 ```
 
+### Declarative Tools (Sugar)
+
+JS parity dari Python sugar. Lihat `documentation/TOOLS_DECLARATIVE.md`.
+
+```javascript
+import { defineTool } from 'antikythera-agent/runtime';
+import { createUnionRegistry } from 'antikythera-agent/runtime';
+
+const search = defineTool({ name: "search", description: "Search the index" }, (args) => ({ results: [] }), "server");
+// isTool(search) == true, extractToolEntry(search).definition == 6-key golden
+
+import { normalizeLocalTools } from 'antikythera-agent/runtime';
+const entries = normalizeLocalTools([search]); // unwrap sugar -> [{definition, handler}]
+```
+
 ## Package Contents
 
 | File | Description |

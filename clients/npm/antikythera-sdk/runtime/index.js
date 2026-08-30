@@ -13,6 +13,7 @@ const { createTransport } = require('./transport.js');
 const { createSseChannel } = require('./sse.js');
 const { createControlHandler, installRuntimeHooksProvider, acquireRuntimeHooksProvider, releaseRuntimeHooksProvider, wrapHookFunction, invokeHook } = require('./control.js');
 const wire = require('./types.js');
+const { defineTool, isTool, extractToolEntry, registerTool, DEFAULT_INPUT_SCHEMA, TOOL_SYMBOL } = require('./tools.js');
 
 /**
  * Create a host runtime for the Antikythera agent core.
@@ -67,5 +68,11 @@ module.exports = {
   wrapHookFunction,
   invokeHook,
   loadRunnerModule,
+  defineTool,
+  isTool,
+  extractToolEntry,
+  registerTool,
+  DEFAULT_INPUT_SCHEMA,
+  TOOL_SYMBOL,
   ...wire,
 };

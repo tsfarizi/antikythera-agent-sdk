@@ -415,6 +415,45 @@ class AgentServer:
         for definition in definitions:
             self._registry.register_client(definition)
 
+    def register_tool(self, obj: Any, allow: bool = False) -> None:
+        """Daftarkan Tool sugar (BaseTool subclass atau @tool function).
+
+        Delegasi ke `antikythera_agent.tools.helpers.register_tool` dengan
+        `registry=self._registry` dan `gate=self._gate` (register != allow
+        strict; collision existing-first dijaga registry; 6-key golden di-
+        validasi helpers). `allow=True` sekalian allowlist di gate,
+        `allow=False` hanya register tanpa allow.
+
+        Args:
+            obj: subclass `BaseTool` atau function `@tool`.
+            allow: bila True sekalian `gate.allow_tool(owner, name)`.
+
+        Raises:
+            TypeError: bila obj bukan Tool atau allow bukan bool.
+            ValueError: owner/keys invalid atau collision registry.
+        """
+        from antikythera_agent.tools.helpers import register_tool as _register_tool
+
+        _register_tool(self._registry, self._gate, obj, allow=allow)
+
+    def register_tools(self, objs: Any, allow: bool = False) -> None:
+        """Bulk helper untuk `register_tool` (loop; allow berlaku untuk semua).
+
+        Args:
+            objs: iterable Tool sugar.
+            allow: bila True sekalian allowlist tiap tool di gate.
+        """
+        if not isinstance(allow, bool):
+            raise TypeError("register_tools: 'allow' must be a bool")
+        if objs is None or isinstance(objs, (str, bytes)):
+            raise TypeError("register_tools: objs must be an iterable of Tools")
+        try:
+            items = list(objs)
+        except TypeError:
+            raise TypeError("register_tools: objs must be an iterable of Tools") from None
+        for obj in items:
+            self.register_tool(obj, allow=allow)
+
     def connect_mcp_server(self, config: Any) -> None:
         """Sambungkan MCP server (destination `mcp`, selalu server-side, K2).
 

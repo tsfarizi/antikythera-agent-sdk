@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from antikythera_agent.local_loop import LocalLoopConfig, ToolLoopError, run_local_loop
 from antikythera_agent.runtime import WasmRuntime, WasmRuntimeError
@@ -70,6 +70,7 @@ class Agent:
         self._session_id = session_id
         self._provider_resolver = provider_resolver
         self._runtime = WasmRuntime()
+        self._pending_tools: List[Tuple[Any, bool]] = []
 
     @classmethod
     def from_config(cls, config: AgentConfig) -> Agent:
@@ -121,12 +122,23 @@ class Agent:
             timeout=self._config.timeout,
             prompts=[prompt],
         )
+        registry = None
+        gate = None
+        if self._pending_tools:
+            from antikythera_agent.server.gate import PolicyGate
+            from antikythera_agent.server.registry import UnionRegistry
+            from antikythera_agent.tools.helpers import register_tool as _register_tool
+
+            registry = UnionRegistry()
+            gate = PolicyGate()
+            for _obj, _allow in list(self._pending_tools):
+                _register_tool(registry, gate, _obj, allow=_allow)
         try:
             outcome = run_local_loop(
                 self._runtime,
                 self._provider_resolver,
-                None,
-                None,
+                registry,
+                gate,
                 loop_config,
             )
         except (ToolLoopError, WasmRuntimeError, PermissionDeniedError) as e:
@@ -159,3 +171,37 @@ class Agent:
             max_steps=self._config.max_steps,
             timeout=self._config.timeout,
         )
+
+    def register_tool(self, obj: Any, allow: bool = False) -> None:
+        """Daftarkan Tool sugar untuk local loop (BaseTool subclass atau @tool function).
+
+        Tool disimpan di `self._pending_tools` dan di-inject sebagai ephemeral
+        `UnionRegistry`+`PolicyGate` pada `run` berikutnya (register != allow
+        strict; collision existing-first dijaga registry; 6-key golden di-
+        validasi `helpers`). `allow=True` sekalian allowlist di gate ephemeral,
+        `allow=False` hanya register tanpa allow.
+
+        Raises:
+            TypeError: bila obj bukan Tool atau allow bukan bool.
+            ValueError: owner/keys invalid.
+        """
+        if not isinstance(allow, bool):
+            raise TypeError("register_tool: 'allow' must be a bool")
+        from antikythera_agent.tools.helpers import is_tool
+
+        if not is_tool(obj):
+            raise TypeError(f"object {obj!r} is not a Tool (missing @tool or BaseTool)")
+        self._pending_tools.append((obj, allow))
+
+    def register_tools(self, objs: Any, allow: bool = False) -> None:
+        """Bulk helper untuk `register_tool` (loop; allow berlaku untuk semua)."""
+        if not isinstance(allow, bool):
+            raise TypeError("register_tools: 'allow' must be a bool")
+        if objs is None or isinstance(objs, (str, bytes)):
+            raise TypeError("register_tools: objs must be an iterable of Tools")
+        try:
+            items = list(objs)
+        except TypeError:
+            raise TypeError("register_tools: objs must be an iterable of Tools") from None
+        for obj in items:
+            self.register_tool(obj, allow=allow)

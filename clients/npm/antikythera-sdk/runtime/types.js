@@ -193,12 +193,21 @@ function buildPostback(input) {
 /**
  * Normalize a `tools` option array into `{definition, handler}` entries.
  * Every entry must carry a definition with a name and a callable handler.
+ * Also accepts ToolRef sugar (defineTool) via Symbol.for('antikythera.tool').
  * @param {Array} [tools]
  * @returns {Array<{definition: object, handler: Function}>}
  */
 function normalizeLocalTools(tools) {
   const entries = Array.isArray(tools) ? tools : [];
-  return entries.map((entry, index) => {
+  return entries.map((rawEntry, index) => {
+    let entry = rawEntry;
+    if (entry != null && (typeof entry === 'object' || typeof entry === 'function')) {
+      const sym = Symbol.for('antikythera.tool');
+      const maybe = entry[sym];
+      if (maybe && typeof maybe === 'object' && maybe !== null && typeof maybe.handler === 'function' && maybe.definition && typeof maybe.definition === 'object') {
+        entry = { definition: maybe.definition, handler: maybe.handler };
+      }
+    }
     if (!entry || typeof entry !== 'object') {
       throw new Error(`tool entry #${index}: expected { definition, handler }`);
     }

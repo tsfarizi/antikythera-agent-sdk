@@ -17,6 +17,7 @@ const { createSseChannel } = require('./sse.js');
 const { createControlHandler, acquireRuntimeHooksProvider, releaseRuntimeHooksProvider } = require('./control.js');
 const { createPolicyGate } = require('./policy.js');
 const { createUnionRegistry } = require('./registry.js');
+const { isTool, extractToolEntry } = require('./tools.js');
 
 /**
  * Client core (K1): the WASM runner lives in this module instance. The host
@@ -174,13 +175,25 @@ const STREAM_DRAIN_TIMEOUT_MS = 250;
  *   bypasses the component import entirely (decision D5).
  * @returns {Promise<object>}
  */
+function normalizeLocalToolsWithSugar(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return normalizeLocalTools(tools);
+  const mapped = tools.map((entry) => {
+    if (isTool(entry)) {
+      const extracted = extractToolEntry(entry);
+      return extracted ? { definition: extracted.definition, handler: extracted.handler } : entry;
+    }
+    return entry;
+  });
+  return normalizeLocalTools(mapped);
+}
+
 async function createClientCoreRuntime(options) {
   if (typeof options.serverUrl !== 'string' || !options.serverUrl) {
     throw new Error('createAgentRuntime: serverUrl is required');
   }
   const transport = createTransport({ serverUrl: options.serverUrl });
   const clientId = options.clientId ?? randomId('client');
-  const localEntries = normalizeLocalTools(options.tools);
+  const localEntries = normalizeLocalToolsWithSugar(options.tools);
   const gate = createPolicyGate(options.policy);
   const maxSteps = options.maxSteps ?? 10;
   const continuationPrompt = options.continuationPrompt ?? '[continue]';

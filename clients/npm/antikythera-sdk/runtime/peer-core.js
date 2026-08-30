@@ -11,6 +11,7 @@ const { createTransport } = require('./transport.js');
 const { createSseChannel } = require('./sse.js');
 const { createControlHandler, acquireRuntimeHooksProvider, releaseRuntimeHooksProvider } = require('./control.js');
 const { createPolicyGate } = require('./policy.js');
+const { isTool, extractToolEntry } = require('./tools.js');
 
 /**
  * Server core: the WASM runner lives on the server, so this module does NOT
@@ -31,6 +32,18 @@ const { createPolicyGate } = require('./policy.js');
  * @param {string} [options.sessionId]
  * @returns {Promise<object>}
  */
+function normalizeLocalToolsWithSugar(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return normalizeLocalTools(tools);
+  const mapped = tools.map((entry) => {
+    if (isTool(entry)) {
+      const extracted = extractToolEntry(entry);
+      return extracted ? { definition: extracted.definition, handler: extracted.handler } : entry;
+    }
+    return entry;
+  });
+  return normalizeLocalTools(mapped);
+}
+
 async function createServerCoreRuntime(options) {
   if (typeof options.serverUrl !== 'string' || !options.serverUrl) {
     throw new Error('createAgentRuntime: serverUrl is required');
@@ -38,7 +51,7 @@ async function createServerCoreRuntime(options) {
   const transport = createTransport({ serverUrl: options.serverUrl });
   const clientId = options.clientId ?? randomId('client');
   const sessionId = options.sessionId ?? null;
-  const localEntries = normalizeLocalTools(options.tools);
+  const localEntries = normalizeLocalToolsWithSugar(options.tools);
   const gate = createPolicyGate(options.policy);
 
   // Hooks provider ownership (R3): released only at close() so a coexisting

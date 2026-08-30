@@ -145,6 +145,7 @@ class Orchestrator:
         self._agents: list[AgentProfileConfig] = []
         self._runtime_factory = runtime_factory
         self._runtime = self._make_runtime()
+        self._pending_tools: list[tuple[Any, bool]] = []
         # Guard state bersama lintas worker: peta sesi -> runtime dan dua
         # penghitung budget di-update atomik di bawah satu kunci.
         self._lock = threading.Lock()
@@ -219,6 +220,22 @@ class Orchestrator:
         with self._lock:
             self._session_runtimes.setdefault(session_id, runtime)
 
+    def _build_pending_registry_gate(self) -> tuple[Any, Any]:
+        """Ephemeral UnionRegistry+PolicyGate dari `self._pending_tools` atau (None,None)."""
+        with self._lock:
+            pending_snapshot = list(self._pending_tools)
+        if not pending_snapshot:
+            return None, None
+        from antikythera_agent.server.gate import PolicyGate
+        from antikythera_agent.server.registry import UnionRegistry
+        from antikythera_agent.tools.helpers import register_tool as _register_tool
+
+        registry = UnionRegistry()
+        gate = PolicyGate()
+        for _obj, _allow in pending_snapshot:
+            _register_tool(registry, gate, _obj, allow=_allow)
+        return registry, gate
+
     def _execute_on_runtime(
         self, task: str, session_id: Optional[str], runtime: WasmRuntime
     ) -> TaskResult:
@@ -237,8 +254,9 @@ class Orchestrator:
             prompts=[task],
         )
         started = time.monotonic()
+        _registry, _gate = self._build_pending_registry_gate()
         try:
-            outcome = run_local_loop(runtime, _default_provider_resolver, None, None, loop_config)
+            outcome = run_local_loop(runtime, _default_provider_resolver, _registry, _gate, loop_config)
         except (
             ToolLoopError,
             provider.LlmError,
@@ -534,3 +552,37 @@ class Orchestrator:
             List of agent profiles.
         """
         return list(self._agents)
+
+    def register_tool(self, obj: Any, allow: bool = False) -> None:
+        """Daftarkan Tool sugar untuk local loop (BaseTool subclass atau @tool function).
+
+        Disimpan di `self._pending_tools` dan di-inject sebagai ephemeral
+        `UnionRegistry`+`PolicyGate` pada dispatch berikutnya (register != allow
+        strict; collision existing-first dijaga registry; 6-key golden di-
+        validasi `helpers`). `allow=True` sekalian allowlist di gate ephemeral.
+
+        Raises:
+            TypeError: bila obj bukan Tool atau allow bukan bool.
+            ValueError: owner/keys invalid.
+        """
+        if not isinstance(allow, bool):
+            raise TypeError("register_tool: 'allow' must be a bool")
+        from antikythera_agent.tools.helpers import is_tool
+
+        if not is_tool(obj):
+            raise TypeError(f"object {obj!r} is not a Tool (missing @tool or BaseTool)")
+        with self._lock:
+            self._pending_tools.append((obj, allow))
+
+    def register_tools(self, objs: Any, allow: bool = False) -> None:
+        """Bulk helper untuk `register_tool` (loop; allow berlaku untuk semua)."""
+        if not isinstance(allow, bool):
+            raise TypeError("register_tools: 'allow' must be a bool")
+        if objs is None or isinstance(objs, (str, bytes)):
+            raise TypeError("register_tools: objs must be an iterable of Tools")
+        try:
+            items = list(objs)
+        except TypeError:
+            raise TypeError("register_tools: objs must be an iterable of Tools") from None
+        for obj in items:
+            self.register_tool(obj, allow=allow)

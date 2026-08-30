@@ -169,6 +169,36 @@ prompts = PromptManager.from_file("prompts.json")
 prompts = PromptManager.from_json('[{"id":"agent","name":"Agent","content":"You are helpful."}]')
 ```
 
+### Declarative Tools (Sugar)
+
+Class/function sugar untuk registrasi tool tanpa boilerplate registry+gate. Lihat `documentation/TOOLS_DECLARATIVE.md`.
+
+```python
+from antikythera_agent.tools import BaseTool, tool
+from antikythera_agent.server import createAgentServer
+
+class SearchTool(BaseTool):
+    name = "search"
+    description = "Search the index"
+    owner = "server"
+    def handle(self, inp):
+        return {"results": []}
+
+# Bridge server
+server = createAgentServer()
+server.register_tool(SearchTool, allow=True)
+
+# Agent / Orchestrator (pending inject pada run/dispatch berikutnya)
+from antikythera_agent import Agent, Orchestrator
+agent = Agent(provider="stub", model="x")
+agent.register_tool(SearchTool, allow=True)
+
+# Function decorator
+@tool("echo", "Echo input", owner="client")
+def echo(args): return {"echoed": args}
+server.register_tool(echo, allow=True)
+```
+
 ## Requirements
 
 - Python 3

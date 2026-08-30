@@ -108,6 +108,9 @@ function createUnionRegistry(options = {}) {
     size() {
       return byName.size;
     },
+    add(definition, owner) {
+      return add(definition, owner);
+    },
   };
 }
 
