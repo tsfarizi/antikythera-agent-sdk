@@ -87,6 +87,8 @@ impl ServerManager {
         instances.insert(name.to_string(), ServerInstance::new(transport));
     }
 
+    /// Get config and create instance.
+    ///
     async fn ensure_instance(&self, server: &str) -> Result<(), ToolInvokeError> {
         if server.is_empty() {
             return Err(ToolInvokeError::NotConfigured {
@@ -94,7 +96,6 @@ impl ServerManager {
             });
         }
 
-        // Check if already exists
         {
             let instances = match self.instances.lock() {
                 Ok(guard) => guard,
@@ -115,7 +116,6 @@ impl ServerManager {
             }
         }
 
-        // Get config and create instance
         let config =
             self.configs
                 .get(server)

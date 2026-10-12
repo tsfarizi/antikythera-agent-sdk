@@ -1,389 +1,176 @@
 #!/usr/bin/env node
-// post-transpile-rename — rename the generic jco-emitted core modules to
-// semantic names and rewrite the corresponding URL literals inside
-// clients/npm/antikythera-sdk/component/antikythera-sdk.js.
-//
-// jco transpile emits opaque numbered modules (the historical pattern this
-// script migrates away from):
-//   antikythera-sdk.core.wasm, antikythera-sdk.core2.wasm .. core6.wasm,
-//   referenced only as literal './antikythera-sdk.coreN.wasm' inside the
-//   generated loader. Those numbers carry no domain meaning and shift when
-//   composition changes, so consumers cannot tell which module implements
-//   which interface.
-//
-// Official semantic contract (fixed names):
-//   antikythera-sdk.runner.core.wasm                 — main SDK agent-runner
-//   antikythera-sdk.tool-registry.core.wasm          — toolrunner/tool-registry impl
-//   antikythera-sdk.logic-hooks-passthrough.core.wasm— default-hooks/logic-hooks impl
-//   antikythera-sdk.wasi-clocks.core.wasm            — WASI clocks (wall/monotonic) shim
-//   antikythera-sdk.wasi-streams.core.wasm           — WASI streams (check-write/write) shim
-//   antikythera-sdk.wasi-filesystem.core.wasm        — WASI filesystem (blocking-flush) shim
-//
-// Classification is EMPIRICAL (content-derived, never name-derived): each
-// *.core*.wasm is scored by counting ASCII byte-signature occurrences, then
-// slots are filled in fixed precedence:
-//   1. runner                  : largest file containing 'antikythera:agent-sdk/runner'
-//   2. tool-registry           : highest combined count of 'tool-registry' +
-//                                'antikythera_toolrunner' among the rest
-//   3. logic-hooks-passthrough : highest combined count of 'logic-hooks' +
-//                                'runtime-hooks' + 'antikythera_default_hooks'
-//   4. support-N               : everything else, numbered by original order
-//
-// Byte evidence recorded when this classification was first derived (probe
-// over the composed bundle, counts = substring occurrences in raw bytes):
-//   core.wasm  : 'antikythera_sdk' x123, 'antikythera:agent-sdk/runner' x50,
-//                'tool-registry' x4, 'logic-hooks' x3            -> runner
-//   core2.wasm : 'wasi:' x22 (no role signature at all)           -> support
-//   core3.wasm : 'tool-registry' x11, 'antikythera_toolrunner' x25 -> tool-registry
-//   core4.wasm : 'wasi:' x20 (no role signature at all)           -> support
-//   core5.wasm : 'logic-hooks' x8, 'antikythera_default_hooks' x2  -> logic-hooks-passthrough
-//   core6.wasm : 'wasi:' x19 (no role signature at all)           -> support
-//
-// Idempotent: files are classified purely by content; a file whose current
-// name already equals its content-derived target is skipped, so a second run
-// reports "no changes". Ambiguous classification (two equally strong
-// candidates for one slot) fails closed with a score matrix plus the longest
-// distinctive ASCII strings per file so a human can adjudicate.
-//
-// Usage: node src/scripts/post-transpile-rename.mjs [component-dir]
-//   (component-dir defaults to clients/npm/antikythera-sdk/component)
-//
-// Node >= 18, ESM, zero dependencies.
-
+/**
+ * Assigns descriptive core-module names to both jco namespace and instantiation bundles.
+ * WIT exports identify application modules, Preview 1 exports identify WASI adapters,
+ * and wit-component function names identify indirect-import trampolines. Import-table
+ * fixups are paired with their trampolines by their WebAssembly type sections and
+ * numbered function signatures. The cross-component canonical ABI adapter is identified
+ * by its callee and transcoding imports. Original filenames and directory order never
+ * determine a module's role. Unknown or ambiguous modules stop the build before mutation.
+ * Usage: node src/scripts/post-transpile-rename.mjs [component-directory]
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const defaultComponentDir = path.join(repoRoot, 'clients', 'npm', 'antikythera-sdk', 'component');
-const loaderBasename = 'antikythera-sdk.js';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const coreFile = /^antikythera-sdk\..*\.core\d*\.wasm$|^antikythera-sdk\.core\d*\.wasm$/;
+const wasmLiteral = /(['"])(\.\/)?(antikythera-sdk\.[a-z0-9.-]+\.wasm)\1/g;
+const roles = ['runner', 'tool-registry', 'logic-hooks-passthrough'];
 
-const NAME_RUNNER = 'antikythera-sdk.runner.core.wasm';
-const NAME_TOOL_REGISTRY = 'antikythera-sdk.tool-registry.core.wasm';
-const NAME_LOGIC_HOOKS = 'antikythera-sdk.logic-hooks-passthrough.core.wasm';
-const NAME_WASI_CLOCKS = 'antikythera-sdk.wasi-clocks.core.wasm';
-const NAME_WASI_STREAMS = 'antikythera-sdk.wasi-streams.core.wasm';
-const NAME_WASI_FILESYSTEM = 'antikythera-sdk.wasi-filesystem.core.wasm';
-
-// Old-name literal emitted by jco into the loader; rewritten via renameMap.
-const LOADER_LITERAL = /\.\/antikythera-sdk\.core\d*\.wasm/g;
-
-const WASM_FILE = /^antikythera-sdk\..*core\d*\.wasm$/;
-const CORE_INDEX = /core(\d*)\.wasm$/;
-
-const SIGNATURES = [
-  ['runner-iface', 'antikythera:agent-sdk/runner'],
-  ['tool-registry', 'tool-registry'],
-  ['logic-hooks', 'logic-hooks'],
-  ['runtime-hooks', 'runtime-hooks'],
-  ['wasi-imports', 'wasi:'],
-  ['component-type', 'component-type'],
-  ['crate-toolrunner', 'antikythera_toolrunner'],
-  ['crate-default-hooks', 'antikythera_default_hooks'],
-  ['crate-sdk', 'antikythera_sdk'],
-];
-
-const SIG = Object.fromEntries(SIGNATURES.map(([key, text]) => [key, text]));
-
-function countOccurrences(buffer, asciiText) {
-  const needle = Buffer.from(asciiText, 'ascii');
-  let count = 0;
-  let index = buffer.indexOf(needle);
-  while (index !== -1) {
-    count += 1;
-    index = buffer.indexOf(needle, index + 1);
-  }
-  return count;
+/** Reads an unsigned LEB128 section length from an already validated core module. */
+function readUnsigned(bytes, cursor) {
+  let value = 0;
+  let shift = 0;
+  let byte;
+  do {
+    byte = bytes[cursor.offset++];
+    value += (byte & 0x7f) * 2 ** shift;
+    shift += 7;
+  } while (byte & 0x80);
+  return value;
 }
 
-function scoreSignatures(buffer) {
-  const scores = new Map();
-  for (const [key, text] of SIGNATURES) {
-    scores.set(key, countOccurrences(buffer, text));
+/** Returns the type section used to match a generated fixup to its import trampoline. */
+function typeSection(bytes) {
+  const cursor = { offset: 8 };
+  while (cursor.offset < bytes.length) {
+    const id = bytes[cursor.offset++];
+    const size = readUnsigned(bytes, cursor);
+    const section = bytes.subarray(cursor.offset, cursor.offset + size);
+    if (id === 1) return section;
+    cursor.offset += size;
   }
-  return scores;
+  throw new Error('generated import glue has no WebAssembly type section');
 }
 
-// Distinct printable ASCII runs, longest first — diagnostic aid for humans
-// adjudicating an ambiguous classification.
-function longestAsciiStrings(buffer, limit) {
-  const runs = new Set();
-  let start = -1;
-  for (let i = 0; i <= buffer.length; i += 1) {
-    const printable = i < buffer.length && buffer[i] >= 0x20 && buffer[i] <= 0x7e;
-    if (printable && start === -1) {
-      start = i;
-    } else if (!printable && start !== -1) {
-      if (i - start >= 8) runs.add(buffer.toString('ascii', start, i));
-      start = -1;
-    }
-  }
-  return [...runs]
-    .sort((a, b) => b.length - a.length || (a < b ? -1 : 1))
-    .slice(0, limit);
-}
-
-function readInventory(componentDir) {
-  return fs.readdirSync(componentDir)
-    .filter((name) => WASM_FILE.test(name))
-    .sort()
-    .map((name) => {
-      const buffer = fs.readFileSync(path.join(componentDir, name));
-      return {
-        currentName: name,
-        size: buffer.length,
-        buffer,
-        scores: scoreSignatures(buffer),
-      };
-    });
-}
-
-function describeScores(scores) {
-  return SIGNATURES
-    .map(([key]) => [key, scores.get(key)])
-    .filter(([, count]) => count > 0)
-    .map(([key, count]) => `'${SIG[key]}' x${count}`)
-    .join(', ') || '(no signatures)';
-}
-
-function pickStrongest(candidates, strengthOf, strengthLabel) {
-  let best = null;
-  let bestStrength = -1;
-  let tie = false;
-  for (const record of candidates) {
-    const strength = strengthOf(record);
-    if (strength > bestStrength) {
-      best = record;
-      bestStrength = strength;
-      tie = false;
-    } else if (strength === bestStrength) {
-      tie = true;
-    }
-  }
-  return { winner: best, strength: bestStrength, tie, strengthLabel };
-}
-
-function originalOrderKey(record) {
-  const match = CORE_INDEX.exec(record.currentName);
-  const digits = match ? match[1] : '';
-  // Numbered jco names keep their composition order; already-semantic names
-  // sort after them, lexicographically, so numbering stays deterministic.
-  return digits !== ''
-    ? [0, Number.parseInt(digits, 10)]
-    : [1, Number.NaN, record.currentName];
-}
-
-function classify(inventory) {
-  const assignments = new Map(); // record -> { name, basis }
-  const pool = [...inventory];
-
-  // Slot 1 — runner: the largest module carrying the agent-sdk/runner iface.
-  const runnerCandidates = pool.filter((r) => r.scores.get('runner-iface') > 0);
-  if (runnerCandidates.length > 0) {
-    const pick = pickStrongest(runnerCandidates, (r) => r.size, 'bytes');
-    if (pick.tie) {
-      return { ambiguity: { slot: 'runner', rule: 'largest file matching \'antikythera:agent-sdk/runner\'', candidates: runnerCandidates } };
-    }
-    assignments.set(pick.winner, {
-      name: NAME_RUNNER,
-      basis: `runner slot: '${SIG['runner-iface']}' x${pick.winner.scores.get('runner-iface')}, largest match (${pick.winner.size} bytes)`,
-    });
-    pool.splice(pool.indexOf(pick.winner), 1);
-  }
-
-  // Slot 2 — tool-registry: strongest toolrunner signal among the rest.
-  const registryCandidates = pool.filter((r) =>
-    r.scores.get('tool-registry') > 0 || r.scores.get('crate-toolrunner') > 0);
-  if (registryCandidates.length > 0) {
-    const pick = pickStrongest(
-      registryCandidates,
-      (r) => r.scores.get('tool-registry') + r.scores.get('crate-toolrunner'),
-      'signature hits',
-    );
-    if (pick.tie) {
-      return { ambiguity: { slot: 'tool-registry', rule: 'highest combined \'tool-registry\' + \'antikythera_toolrunner\' count', candidates: registryCandidates } };
-    }
-    assignments.set(pick.winner, {
-      name: NAME_TOOL_REGISTRY,
-      basis: `tool-registry slot: '${SIG['tool-registry']}' x${pick.winner.scores.get('tool-registry')} + '${SIG['crate-toolrunner']}' x${pick.winner.scores.get('crate-toolrunner')}`,
-    });
-    pool.splice(pool.indexOf(pick.winner), 1);
-  }
-
-  // Slot 3 — logic-hooks passthrough: strongest hooks signal among the rest.
-  const hooksCandidates = pool.filter((r) =>
-    r.scores.get('logic-hooks') > 0 || r.scores.get('runtime-hooks') > 0 || r.scores.get('crate-default-hooks') > 0);
-  if (hooksCandidates.length > 0) {
-    const pick = pickStrongest(
-      hooksCandidates,
-      (r) => r.scores.get('logic-hooks') + r.scores.get('runtime-hooks') + r.scores.get('crate-default-hooks'),
-      'signature hits',
-    );
-    if (pick.tie) {
-      return { ambiguity: { slot: 'logic-hooks-passthrough', rule: 'highest combined \'logic-hooks\' + \'runtime-hooks\' + \'antikythera_default_hooks\' count', candidates: hooksCandidates } };
-    }
-    assignments.set(pick.winner, {
-      name: NAME_LOGIC_HOOKS,
-      basis: `logic-hooks slot: '${SIG['logic-hooks']}' x${pick.winner.scores.get('logic-hooks')} + '${SIG['crate-default-hooks']}' x${pick.winner.scores.get('crate-default-hooks')}`,
-    });
-    pool.splice(pool.indexOf(pick.winner), 1);
-  }
-
-  // Slot 4 — wasi shims: unclassified internal WASI adapters, descriptive names.
-  // Descriptive mapping (short, stable, content-derived):
-  //   wasi-clocks      — unique holder of wall-clock/monotonic-clock
-  //   wasi-streams     — streams write/check-write without blocking-flush
-  //   wasi-filesystem  — filesystem + blocking-flush holder
-  const wasiClocks = pool.filter((r) => r.scores.get('wasi-imports') > 0 && (r.buffer.toString('ascii').includes('wall-clock') || r.buffer.toString('ascii').includes('monotonic-clock')));
-  const wasiFilesystem = pool.filter((r) => r.buffer.toString('ascii').includes('blocking-flush'));
-  const wasiStreams = pool.filter((r) => !wasiClocks.includes(r) && !wasiFilesystem.includes(r));
-  const ordered = [...wasiClocks, ...wasiStreams, ...wasiFilesystem];
-  // Fallback to original order if classification ambiguous (e.g. wit-bindgen grouping changed)
-  const supportPool = ordered.length === pool.length ? ordered : pool.sort((a, b) => {
-    const ka = originalOrderKey(a);
-    const kb = originalOrderKey(b);
-    return ka[0] - kb[0] || (ka[0] === 0 ? ka[1] - kb[1] : String(ka[2]).localeCompare(String(kb[2])));
+/** Validates every binary and records its actual import/export surface before planning renames. */
+function inventory(directory) {
+  return fs.readdirSync(directory).filter((name) => coreFile.test(name)).sort().map((name) => {
+    const bytes = fs.readFileSync(path.join(directory, name));
+    const module = new WebAssembly.Module(bytes);
+    return {
+      name, bytes,
+      imports: WebAssembly.Module.imports(module),
+      exports: WebAssembly.Module.exports(module),
+      debugNames: WebAssembly.Module.customSections(module, 'name')
+        .map((section) => Buffer.from(section).toString('utf8')).join('\n'),
+    };
   });
-  const nameMap = [NAME_WASI_CLOCKS, NAME_WASI_STREAMS, NAME_WASI_FILESYSTEM];
-  supportPool.forEach((record, index) => {
-    const name = nameMap[index] || `antikythera-sdk.wasi-shim-${index + 1}.core.wasm`;
-    assignments.set(record, {
-      name,
-      basis: `wasi shim -> ${name.split('.')[1]}: ${describeScores(record.scores)}`,
+}
+
+/** Classifies module responsibilities without consulting jco's numbered filenames. */
+function classify(records) {
+  const assigned = new Map();
+  const trampolines = [];
+  const fixups = [];
+  const assign = (record, role) => assigned.set(record, `antikythera-sdk.${role}.core.wasm`);
+  for (const record of records) {
+    const hasExport = (name, kind = 'function') => record.exports.some((entry) => entry.name === name && entry.kind === kind);
+    const apiRoles = roles.filter((role) => record.exports.some((entry) => entry.kind === 'function'
+      && entry.name.startsWith(`antikythera:agent-sdk/${role === 'logic-hooks-passthrough' ? 'logic-hooks' : role}@`)));
+    if (apiRoles.length === 1) {
+      assign(record, apiRoles[0]);
+    } else if (apiRoles.length > 1) {
+      throw new Error(`ambiguous WIT role in '${record.name}': ${apiRoles.join(', ')}`);
+    } else if (hasExport('cabi_import_realloc') && record.imports.some((entry) => entry.module.startsWith('wasi:'))) {
+      const owner = hasExport('clock_time_get') ? 'runner'
+        : hasExport('random_get') ? 'tool-registry' : 'logic-hooks-passthrough';
+      assign(record, `${owner}.wasi-preview1-adapter`);
+    } else if (record.imports.length === 0 && hasExport('$imports', 'table')
+      && record.exports.every((entry) => entry.name === '$imports' || (entry.kind === 'function' && /^\d+$/.test(entry.name)))) {
+      const owner = record.debugNames.includes('indirect-antikythera:agent-sdk/runtime-hooks@') ? 'runner'
+        : record.debugNames.includes('adapt-wasi_snapshot_preview1-random_get') ? 'tool-registry'
+          : record.debugNames.includes('adapt-wasi_snapshot_preview1-fd_write') ? 'logic-hooks-passthrough' : null;
+      if (!owner) throw new Error(`unknown import-trampoline owner in '${record.name}'; preserve wit-component name sections`);
+      assign(record, `${owner}.import-trampolines`);
+      trampolines.push(record);
+    } else if (record.exports.length === 0 && record.imports.some((entry) => entry.module === '' && entry.name === '$imports' && entry.kind === 'table')
+      && record.imports.every((entry) => entry.module === '' && (entry.name === '$imports' || (entry.kind === 'function' && /^\d+$/.test(entry.name))))) {
+      fixups.push(record);
+    } else if (record.imports.some((entry) => entry.module === 'callee')
+      && record.imports.some((entry) => entry.module === 'transcode')
+      && record.exports.length > 0 && record.exports.every((entry) => entry.kind === 'function' && /^adapter\d+$/.test(entry.name))) {
+      assign(record, 'component-abi-adapters');
+    } else {
+      throw new Error(`unknown core-module role in '${record.name}'; update classification for the new component shape`);
+    }
+  }
+  for (const record of fixups) {
+    const names = record.imports.filter((entry) => entry.kind === 'function').map((entry) => entry.name).sort();
+    const candidates = trampolines.filter((shim) => {
+      const exported = shim.exports.filter((entry) => entry.kind === 'function').map((entry) => entry.name).sort();
+      return JSON.stringify(names) === JSON.stringify(exported) && typeSection(record.bytes).equals(typeSection(shim.bytes));
     });
-  });
-
-  return { assignments };
+    if (candidates.length !== 1) {
+      throw new Error(`ambiguous import-fixup owner in '${record.name}': ${candidates.length} matching trampolines`);
+    }
+    assigned.set(record, assigned.get(candidates[0]).replace('.import-trampolines.', '.import-fixups.'));
+  }
+  return assigned;
 }
 
-function reportAmbiguity(ambiguity, inventory) {
-  console.error(`AMBIGUOUS classification for slot '${ambiguity.slot}'`);
-  console.error(`rule: ${ambiguity.rule}`);
-  console.error('');
-  console.error('score matrix (occurrence counts):');
-  const header = 'file'.padEnd(46) + SIGNATURES.map(([key]) => key.slice(0, 10).padStart(11)).join('');
-  console.error(header);
-  for (const record of inventory) {
-    const row = record.currentName.padEnd(46)
-      + SIGNATURES.map(([key]) => String(record.scores.get(key)).padStart(11)).join('');
-    console.error(row);
-  }
-  console.error('');
-  for (const record of inventory) {
-    console.error(`${record.currentName} (${record.size} bytes) — top distinct ASCII strings:`);
-    for (const text of longestAsciiStrings(record.buffer, 20)) {
-      console.error(`  ${text}`);
+/** Checks filename collisions and loader completeness before changing either files or references. */
+function plan(directory, records, assigned) {
+  const targets = new Set();
+  const renameMap = new Map();
+  for (const record of records) {
+    const target = assigned.get(record);
+    if (targets.has(target)) throw new Error(`rename collision: multiple modules implement '${target}'`);
+    if (target !== record.name && fs.existsSync(path.join(directory, target))) {
+      throw new Error(`rename collision: target '${target}' already exists`);
     }
-    console.error('');
+    targets.add(target);
+    renameMap.set(record.name, target);
   }
-}
-
-function planRenames(inventory, assignments, componentDir) {
-  const targets = new Map(); // newName -> currentName
-  const renames = [];
-  for (const record of inventory) {
-    const target = assignments.get(record).name;
-    if (targets.has(target)) {
-      return { error: `rename collision: '${targets.get(target)}' and '${record.currentName}' both map to '${target}'` };
-    }
-    targets.set(target, record.currentName);
-    if (target !== record.currentName) {
-      const targetPath = path.join(componentDir, target);
-      if (fs.existsSync(targetPath)) {
-        return { error: `rename collision: target '${target}' already exists on disk but is not part of the classified set` };
-      }
-      renames.push({ from: record.currentName, to: target });
-    }
-  }
-  return { renames };
-}
-
-function rewriteLoader(componentDir, renameMap) {
-  const loaderPath = path.join(componentDir, loaderBasename);
-  if (!fs.existsSync(loaderPath)) {
-    console.warn(`WARNING: '${loaderBasename}' not found in ${componentDir};`);
-    console.warn('WARNING: URL literals were NOT rewritten (bundle not transpiled yet?).');
-    return { rewritten: false, occurrences: 0 };
-  }
+  const loaderPath = path.join(directory, 'antikythera-sdk.js');
   const source = fs.readFileSync(loaderPath, 'utf8');
-  const unknownLiterals = [];
-  let occurrences = 0;
-  const rewritten = source.replace(LOADER_LITERAL, (literal) => {
-    occurrences += 1;
-    const mapped = renameMap.get(literal.slice(2));
-    if (!mapped) {
-      unknownLiterals.push(literal);
-      return literal;
-    }
-    return `./${mapped}`;
+  const referenced = new Set();
+  const rewritten = source.replace(wasmLiteral, (literal, quote, prefix = '', name) => {
+    const target = renameMap.get(name);
+    if (!target) throw new Error(`loader references unclassified module '${name}'`);
+    referenced.add(name);
+    return `${quote}${prefix}${target}${quote}`;
   });
-  if (unknownLiterals.length > 0) {
-    return { error: `loader references modules absent from the classified set: ${[...new Set(unknownLiterals)].join(', ')}` };
+  for (const record of records) {
+    if (!referenced.has(record.name)) throw new Error(`core module '${record.name}' has no loader reference`);
   }
-  if (rewritten !== source) {
-    fs.writeFileSync(loaderPath, rewritten);
-  }
-  return { rewritten: true, occurrences };
+  return { loaderPath, source, rewritten };
 }
 
-function main() {
-  const componentDir = process.argv[2] ? path.resolve(process.argv[2]) : defaultComponentDir;
-
-  if (!fs.existsSync(componentDir) || !fs.readdirSync(componentDir).some((name) => WASM_FILE.test(name))) {
-    console.log(`post-transpile-rename: no '*.core*.wasm' modules in ${componentDir}`);
-    console.log('nothing to do — component bundle not built yet (run `task transpile` first).');
-    process.exitCode = 0;
-    return;
+/** Stages the loader and rolls back renamed binaries if installing the new loader fails. */
+function apply(directory, records, assigned, loader) {
+  const temporary = `${loader.loaderPath}.rename-${process.pid}.tmp`;
+  const moved = [];
+  try {
+    if (loader.rewritten !== loader.source) fs.writeFileSync(temporary, loader.rewritten, { flag: 'wx' });
+    for (const record of records) {
+      const target = assigned.get(record);
+      if (target === record.name) continue;
+      fs.renameSync(path.join(directory, record.name), path.join(directory, target));
+      moved.push([record.name, target]);
+    }
+    if (loader.rewritten !== loader.source) fs.renameSync(temporary, loader.loaderPath);
+  } catch (error) {
+    for (const [original, target] of moved.reverse()) fs.renameSync(path.join(directory, target), path.join(directory, original));
+    throw error;
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
   }
-
-  const inventory = readInventory(componentDir);
-  const result = classify(inventory);
-  if (result.ambiguity) {
-    reportAmbiguity(result.ambiguity, inventory);
-    process.exitCode = 1;
-    return;
-  }
-
-  const plan = planRenames(inventory, result.assignments, componentDir);
-  if (plan.error) {
-    console.error(`post-transpile-rename: refusing partial state — ${plan.error}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  console.log(`post-transpile-rename: scanned ${inventory.length} core module(s) in ${componentDir}`);
-  console.log('');
-  console.log('OLD NAME -> NEW NAME (basis)');
-  for (const record of inventory) {
-    const assignment = result.assignments.get(record);
-    const moved = assignment.name === record.currentName ? '' : '  [RENAMED]';
-    console.log(`  ${record.currentName}`);
-    console.log(`    -> ${assignment.name}${moved}`);
-    console.log(`       ${assignment.basis}`);
-  }
-
-  for (const { from, to } of plan.renames) {
-    fs.renameSync(path.join(componentDir, from), path.join(componentDir, to));
-  }
-
-  const renameMap = new Map([...result.assignments].map(([record, assignment]) => [record.currentName, assignment.name]));
-  const loader = rewriteLoader(componentDir, renameMap);
-  if (loader.error) {
-    console.error(`post-transpile-rename: ${loader.error}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  console.log('');
-  console.log(`renamed: ${plan.renames.length}, unchanged (already semantic): ${inventory.length - plan.renames.length}`);
-  if (loader.rewritten) {
-    console.log(`loader literals rewritten: ${loader.occurrences} occurrence(s) in ${loaderBasename}`);
-  }
-  console.log(plan.renames.length === 0 && (!loader.rewritten || loader.occurrences === 0)
-    ? 'result: OK — no changes'
-    : 'result: OK');
-  process.exitCode = 0;
+  return moved.length;
 }
 
-main();
+try {
+  const directory = process.argv[2] ? path.resolve(process.argv[2]) : path.join(root, 'clients/npm/antikythera-sdk/component');
+  const records = inventory(directory);
+  if (records.length === 0) throw new Error(`no core modules found in '${directory}'; transpile the component first`);
+  const assigned = classify(records);
+  const loader = plan(directory, records, assigned);
+  const count = apply(directory, records, assigned, loader);
+  for (const record of records) console.log(`${record.name} -> ${assigned.get(record)}`);
+  console.log(`post-transpile-rename: ${records.length} modules classified, ${count} renamed`);
+} catch (error) {
+  console.error(`post-transpile-rename: ${error.message}`);
+  process.exitCode = 1;
+}

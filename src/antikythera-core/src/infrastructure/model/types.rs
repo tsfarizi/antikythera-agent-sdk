@@ -141,6 +141,8 @@ impl ModelError {
     }
 
     /// User-friendly error message in English
+    /// The provider implementation already stringified the transport error.
+    ///
     pub fn user_message(&self) -> String {
         match self {
             ModelError::ProviderNotFound { provider } => format!(
@@ -153,7 +155,6 @@ impl ModelError {
                 format!("Provider '{provider}' requires an API key.")
             }
             ModelError::Network { provider, message } => {
-                // The provider implementation already stringified the transport error.
                 format!("Network error calling provider '{provider}': {message}")
             }
             ModelError::InvalidResponse { provider, .. } => {

@@ -207,3 +207,13 @@ server.register_tool(echo, allow=True)
 ## License
 
 MIT
+
+
+## Configured-agent delivery
+
+Run a configured agent on the server or export a standalone client environment
+containing its configuration, composed WASM component, jco factory, TypeScript
+declarations, and explicit client tool/hook bindings. Python exposes
+`agent.deployment(agent_id=...)`; TypeScript exposes `createAgentDeployment`.
+See [the delivery guide](../../documentation/AGENT_DELIVERY.md) for server execution, client export,
+HTTP hosting, and capability placement.

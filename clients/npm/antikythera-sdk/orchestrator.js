@@ -49,6 +49,8 @@ class Orchestrator {
   #budget;
   /** @type {number} */
   #taskSeq;
+  #reservedSteps = 0;
+  #inFlightTasks = 0;
 
   /**
    * @param {object} config
@@ -71,6 +73,9 @@ class Orchestrator {
     const maxConcurrent = config.maxConcurrentTasks ?? 4;
     if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) {
       throw new Error('Orchestrator: maxConcurrentTasks must be a positive integer');
+    }
+    for (const name of ['maxTotalTasks','maxTotalSteps']) {
+      if (config[name] != null && (!Number.isInteger(config[name]) || config[name] < 0)) throw new Error(`Orchestrator: ${name} must be a non-negative integer`);
     }
     this.#serverUrl = config.serverUrl;
     this.#executionMode = mode;
@@ -101,6 +106,8 @@ class Orchestrator {
     ) {
       throw new Error('Orchestrator: agent profile requires non-empty id, name, and role');
     }
+    if (this.#profiles.some(existing => existing.id === profile.id)) throw new Error('Orchestrator: duplicate agent id');
+    if (profile.maxSteps != null && (!Number.isInteger(profile.maxSteps) || profile.maxSteps < 1)) throw new Error('Orchestrator: profile maxSteps must be a positive integer');
     this.#profiles.push({ ...profile });
   }
 
@@ -120,13 +127,12 @@ class Orchestrator {
    *   stepsUsed: number, sessionId: string, error?: string, errorKind?: string, durationMs: number}>}
    */
   async dispatch(task, opts = {}) {
-    const profile = this.#selectProfile();
+    const profile = this.#selectProfile(opts.agentId);
     if (this.#isBudgetExhausted()) {
       return this.#budgetDenied(profile.id);
     }
-    this.#warmPool();
     const cached = typeof opts?.sessionId === 'string' ? this.#sessions.get(opts.sessionId) : undefined;
-    const runtimeSource = cached ? Promise.resolve(cached) : this.#ensureProfileRuntime(0);
+    const runtimeSource = cached ? Promise.resolve(cached) : () => this.#ensureProfileRuntime(this.#profiles.indexOf(profile));
     return this.#runTask(profile, runtimeSource, task);
   }
 
@@ -156,7 +162,7 @@ class Orchestrator {
       }
       return results;
     }
-    const profile = this.#selectProfile();
+    const profile = this.#selectProfile(opts.agentId);
     const results = new Array(tasks.length);
     let nextIndex = 0;
     const workerCount = Math.min(this.#maxConcurrentTasks, tasks.length);
@@ -170,7 +176,7 @@ class Orchestrator {
             results[index] = this.#budgetDenied(profile.id);
             continue;
           }
-          results[index] = await this.#runTask(profile, this.#acquireRuntime(profile), tasks[index]);
+          results[index] = await this.#runTask(profile, () => this.#acquireRuntime(profile), tasks[index]);
         }
       })());
     }
@@ -265,14 +271,13 @@ class Orchestrator {
   }
 
   /**
-   * Close every live runtime (best-effort; individual failures ignored).
+   * Close every live runtime and clear its registrations, continuing after individual failures.
    */
   close() {
     for (const runtime of this.#liveRuntimes) {
       try {
         if (typeof runtime.close === 'function') runtime.close();
       } catch {
-        // best-effort shutdown: a failing close must not mask the others
       }
     }
     this.#liveRuntimes.clear();
@@ -281,9 +286,14 @@ class Orchestrator {
   }
 
   /** @returns {object} the first registered profile (throws before any task runs) */
-  #selectProfile() {
+  #selectProfile(agentId) {
     if (this.#profiles.length === 0) {
       throw new Error('Orchestrator: no agent registered — call registerAgent() before dispatching tasks');
+    }
+    if (agentId != null) {
+      const selected = this.#profiles.find(profile => profile.id === agentId);
+      if (!selected) throw new Error(`Orchestrator: unknown agent '${agentId}'`);
+      return selected;
     }
     return this.#profiles[0];
   }
@@ -304,7 +314,7 @@ class Orchestrator {
     let pending = this.#profileRuntimes.get(index);
     if (!pending) {
       pending = this.#acquireRuntime(this.#profiles[index]);
-      pending.catch(() => {}); // rejection surfaces to its consumer, not as unhandled
+      pending.catch(() => { this.#profileRuntimes.delete(index); });
       this.#profileRuntimes.set(index, pending);
     }
     return pending;
@@ -334,11 +344,18 @@ class Orchestrator {
    * rejections — callers branch on success instead of try/catch.
    */
   async #runTask(profile, runtimeSource, prompt) {
+    if (this.#isBudgetExhausted()) return this.#budgetDenied(profile.id);
+    const reservation = Math.min(profile.maxSteps ?? 10, this.#maxTotalSteps == null ? Infinity : this.#maxTotalSteps - this.#budget.consumedSteps - this.#reservedSteps);
+    if (reservation <= 0) return this.#budgetDenied(profile.id);
+    this.#reservedSteps += reservation;
+    this.#inFlightTasks += 1;
     const start = Date.now();
     const taskId = `task-${++this.#taskSeq}`;
     try {
-      const runtime = await runtimeSource;
-      const turn = await runtime.runTurn(prompt);
+      const runtime = await (typeof runtimeSource === 'function' ? runtimeSource() : runtimeSource);
+      if (typeof runtime.connect === 'function') await runtime.connect();
+      if (runtime.sessionId) this.#sessions.set(runtime.sessionId, runtime);
+      const turn = await runtime.runTurn(prompt, { maxSteps: reservation });
       if (turn && typeof turn.sessionId === 'string' && turn.sessionId !== '') {
         this.#sessions.set(turn.sessionId, runtime);
       }
@@ -355,24 +372,28 @@ class Orchestrator {
       this.#budget.dispatchedTasks += 1;
       return result;
     } catch (err) {
+      this.#budget.consumedSteps += err?.stepsUsed ?? 0;
       this.#budget.dispatchedTasks += 1;
       return {
         taskId,
         agentId: profile.id,
         output: null,
         success: false,
-        stepsUsed: 0,
-        sessionId: '',
+        stepsUsed: err?.stepsUsed ?? 0,
+        sessionId: err?.sessionId ?? '',
         error: err instanceof Error ? err.message : String(err),
         durationMs: Date.now() - start,
       };
+    } finally {
+      this.#reservedSteps -= reservation;
+      this.#inFlightTasks -= 1;
     }
   }
 
   /** Budget-denied result: no runTurn call, no counter update (nothing ran). */
   #isBudgetExhausted() {
     const budget = this.getBudget();
-    return budget.isStepBudgetExhausted || budget.isTaskBudgetExhausted;
+    return budget.isStepBudgetExhausted || budget.isTaskBudgetExhausted || (this.#maxTotalTasks != null && this.#budget.dispatchedTasks + this.#inFlightTasks >= this.#maxTotalTasks) || (this.#maxTotalSteps != null && this.#budget.consumedSteps + this.#reservedSteps >= this.#maxTotalSteps);
   }
 
   #budgetDenied(agentId) {

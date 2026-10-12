@@ -11,8 +11,20 @@ use antikythera_server_runtime::loop_owner::{ToolLoopConfig, run_tool_loop};
 use antikythera_server_runtime::registry::Destination;
 use antikythera_server_runtime::{CoreSession, RuntimeServer};
 
+/// Registration is a grant: the local destination is allowlisted so the default-deny gate does
+/// not reject the registered tool.
+///
 fn parse_args() -> (ServerRuntimeConfig, bool) {
-    let mut config = ServerRuntimeConfig::default();
+    let mut config = ServerRuntimeConfig {
+        auth_token: std::env::var("ANTIKYTHERA_AUTH_TOKEN").ok(),
+        allowed_origins: std::env::var("ANTIKYTHERA_ALLOWED_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.trim().to_string())
+            .collect(),
+        ..Default::default()
+    };
     let mut smoke = false;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -48,8 +60,6 @@ fn parse_args() -> (ServerRuntimeConfig, bool) {
                     .get(i)
                     .expect("--server-tool needs <name>:<response-json>");
                 let tool = ServerToolSpec::parse(spec).unwrap_or_else(|e| panic!("{e}"));
-                // Registration is a grant: the local destination is allowlisted
-                // so the default-deny gate does not reject the registered tool.
                 config.policy.allow_tool(Destination::Local, &tool.name);
                 config.server_tools.push(tool);
             }
@@ -72,11 +82,14 @@ fn parse_args() -> (ServerRuntimeConfig, bool) {
     (config, smoke)
 }
 
+/// Deterministic stub: commit consumes `{"action":"final",...}`.
+///
+/// Keeps the process alive serving HTTP.
+///
 fn main() {
     let (mut config, smoke) = parse_args();
 
     if smoke {
-        // Deterministic stub: commit consumes `{"action":"final",...}`.
         config.providers.insert(
             "stub".to_string(),
             LlmProviderSpec::Stub {
@@ -135,6 +148,5 @@ fn main() {
         return;
     }
 
-    // Keep the process alive serving HTTP.
     std::thread::park();
 }

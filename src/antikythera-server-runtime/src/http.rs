@@ -13,8 +13,10 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::Request;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -30,6 +32,20 @@ use crate::wit::SharedState;
 
 /// Build the wire-protocol router.
 pub fn router(shared: Arc<SharedState>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(
+            shared
+                .allowed_origins
+                .iter()
+                .filter_map(|value| value.parse::<HeaderValue>().ok())
+                .collect::<Vec<_>>(),
+        )
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderName::from_static("x-antikythera-client-id"),
+        ]);
     Router::new()
         .route("/antikythera/v1/llm/call", post(llm_call))
         .route("/antikythera/v1/tools/execute", post(tools_execute))
@@ -39,8 +55,42 @@ pub fn router(shared: Arc<SharedState>) -> Router {
             "/antikythera/v1/events/{correlation_id}/response",
             post(postback),
         )
-        .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn_with_state(shared.clone(), authorize))
+        .layer(cors)
         .with_state(shared)
+}
+
+async fn authorize(
+    State(shared): State<Arc<SharedState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if let Some(origin) = request.headers().get("origin")
+        && !origin.to_str().is_ok_and(|value| {
+            shared
+                .allowed_origins
+                .iter()
+                .any(|allowed| allowed == value)
+        })
+    {
+        return permission_response("permission: origin not allowed".into());
+    }
+    if let Some(token) = &shared.auth_token {
+        let expected = format!("Bearer {token}");
+        if request
+            .headers()
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            != Some(expected.as_str())
+        {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error":"permission: authentication required"})),
+            )
+                .into_response();
+        }
+    }
+    next.run(request).await
 }
 
 fn permission_response(message: String) -> Response {
@@ -55,10 +105,6 @@ fn bad_request(message: impl Into<String>) -> Response {
         .into_response()
 }
 
-// ---------------------------------------------------------------------------
-// POST /antikythera/v1/llm/call
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Deserialize)]
 pub struct LlmCallQuery {
     #[serde(default)]
@@ -68,6 +114,7 @@ pub struct LlmCallQuery {
 async fn llm_call(
     State(shared): State<Arc<SharedState>>,
     Query(query): Query<LlmCallQuery>,
+    headers: HeaderMap,
     Json(request): Json<LlmRequest>,
 ) -> Response {
     if let Err(e) = shared.check_llm_gate(request.session_id.as_deref()) {
@@ -81,14 +128,20 @@ async fn llm_call(
     if query.stream {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let control = shared.control.clone();
-        let client_id = shared.client_id.clone();
+        let client_id = headers
+            .get("x-antikythera-client-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or(&shared.client_id)
+            .to_string();
         let session_id = request.session_id.clone();
-        tokio::spawn(async move {
+        let pump = tokio::spawn(async move {
             while let Some(chunk) = rx.recv().await {
                 control.push_llm_token(&client_id, session_id.as_deref(), &chunk);
             }
         });
-        match provider.call_stream(request, tx).await {
+        let response = provider.call_stream(request, tx).await;
+        let _ = pump.await;
+        match response {
             Ok(response) => Json(response).into_response(),
             Err(e) => bad_request(e.to_string()),
         }
@@ -99,10 +152,6 @@ async fn llm_call(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// POST /antikythera/v1/tools/execute
-// ---------------------------------------------------------------------------
 
 async fn tools_execute(
     State(shared): State<Arc<SharedState>>,
@@ -115,19 +164,13 @@ async fn tools_execute(
     }
 }
 
-// ---------------------------------------------------------------------------
-// GET /antikythera/v1/tools
-// ---------------------------------------------------------------------------
-
 async fn tools_list(State(shared): State<Arc<SharedState>>) -> Json<Vec<ToolDefinition>> {
     Json(shared.router.peer_definitions())
 }
 
-// ---------------------------------------------------------------------------
-// GET /antikythera/v1/events  (SSE control channel)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Deserialize)]
+/// GET /antikythera/v1/events  (SSE control channel).
+///
 pub struct EventsQuery {
     pub client_id: String,
     pub session_id: Option<String>,
@@ -143,14 +186,12 @@ async fn events_sse(
     let rx = shared.control.register_client(&query.client_id);
     let _ = shared.control.push_lifecycle(&query.client_id, "connected");
 
-    let seq = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let stream = BroadcastStream::new(rx).map(move |item| {
-        let n = seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let json = match item {
             Ok(json) => json,
-            Err(_) => "{}".to_string(),
+            Err(error) => json!({"type":"error", "correlation_id":null, "session_id":null, "client_id":null, "payload":{"error":format!("control channel lost events: {error}; resynchronize registry")}}).to_string(),
         };
-        Ok::<_, Infallible>(Event::default().id(n.to_string()).data(json))
+        Ok::<_, Infallible>(Event::default().data(json))
     });
 
     Ok(Sse::new(stream).keep_alive(
@@ -159,10 +200,6 @@ async fn events_sse(
             .text("keepalive"),
     ))
 }
-
-// ---------------------------------------------------------------------------
-// POST /antikythera/v1/events/{correlation-id}/response
-// ---------------------------------------------------------------------------
 
 async fn postback(
     State(shared): State<Arc<SharedState>>,
@@ -187,24 +224,5 @@ async fn postback(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn events_query_requires_client_id() {
-        // `client_id` has no default: missing it is a deserialization error.
-        let query: Result<EventsQuery, _> = serde_urlencoded::from_str("session_id=s1");
-        assert!(query.is_err());
-        let query: EventsQuery = serde_urlencoded::from_str("client_id=c1&session_id=s1").unwrap();
-        assert_eq!(query.client_id, "c1");
-        assert_eq!(query.session_id.as_deref(), Some("s1"));
-    }
-
-    #[test]
-    fn llm_call_query_stream_defaults_false() {
-        let query: LlmCallQuery = serde_urlencoded::from_str("").unwrap();
-        assert!(!query.stream);
-        let query: LlmCallQuery = serde_urlencoded::from_str("stream=true").unwrap();
-        assert!(query.stream);
-    }
-}
+#[path = "../../../tests/rust/unit/antikythera-server-runtime/http.tests.rs"]
+mod tests;

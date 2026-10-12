@@ -15,7 +15,6 @@ pub mod rate_limit;
 #[cfg(feature = "memory")]
 pub mod secrets;
 
-// Re-exports
 pub use error::SecurityError;
 pub use facade::SecurityFacade;
 

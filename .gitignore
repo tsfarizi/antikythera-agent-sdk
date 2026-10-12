@@ -3,7 +3,7 @@
 /config
 /book
 *.txt
-!src/tests/fixtures/contracts/wit_signatures.golden.txt
+!tests/rust/fixtures/contracts/wit_signatures.golden.txt
 /servers
 .env
 .code-review-graph/
@@ -36,3 +36,7 @@ htmlcov/
 .venv/
 venv/
 *.so
+
+.runtime-build/
+
+.runtime-test-tmp/

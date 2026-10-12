@@ -1,3 +1,5 @@
+//! CLI output macros live in `macros.rs` so they are always available.
+//!
 //! # Compile-Time Logging Lint
 //!
 //! This module provides compile-time enforcement that ensures all logging
@@ -37,15 +39,13 @@
 //! cli_eprint!("Error: invalid argument");
 //! ```
 
-// ============================================================================
-// Shadow macros that produce compile errors
-// ============================================================================
-
 /// **BLOCKED** — Use `alog_debug!`, `alog_info!`, `alog_warn!`, or `alog_error!` instead.
 ///
 /// Direct `println!` bypasses the structured logging system.
 /// For legitimate CLI output, use `cli_print!` instead.
 #[macro_export]
+/// Shadow macros that produce compile errors.
+///
 macro_rules! println {
     ($($arg:tt)*) => {
         compile_error!(
@@ -83,10 +83,6 @@ macro_rules! dbg {
         )
     };
 }
-
-// ============================================================================
-// Shadow tracing macros
-// ============================================================================
 
 /// **BLOCKED** — Use `alog_error!` instead.
 #[macro_export]
@@ -142,5 +138,3 @@ macro_rules! tracing_trace {
         )
     };
 }
-
-// CLI output macros live in `macros.rs` so they are always available.

@@ -1,53 +1,15 @@
-"""HTTP wire-protocol transport (unit U31): router + ThreadingHTTPServer default.
+"""HTTP wire transport backed by a bounded provider timeout and stdlib threads.
 
-Sumber kebenaran:
-- documentation/WIRE_PROTOCOL.md  §2 (endpoint), §3 (keluarga event), §4
-  (streaming: token `llm-token` di SSE channel; `?stream=true` query param
-  pada POST /llm/call — BUKAN di body), §5 (POST-back 204; unknown diabaikan
-  + di-log; keepalive), §7 (nol field di luar golden).
-- contracts/shared/wire_protocol.golden.json  (shape kanonik semua respons;
-  invarian 5).
-- antikythera-server-runtime/src/http.rs      (routing, 403 `permission:`,
-  400, 204, client_id required pada SSE, keepalive 15s).
-- antikythera-server-runtime/src/routing.rs   (semantik tools/execute:
-  unknown owner = denial `permission:`, client-owned = denial, gate SEBELUM
-  eksekusi, failure handler = hasil success=false, arguments-json gagal
-  di-parse = error non-permission).
-- antikythera-server-runtime/src/control.rs   (push_llm_token: satu token =
-  konten utuh, mirror default `call_stream`).
-- npm/antikythera-sdk/runtime/transport.js    (client: `?stream=true`).
-- npm/antikythera-sdk/test/runtime-bridge.test.mjs  (parity client: token
-  `llm-token` payload.chunk = konten penuh; 403 body persis
-  `error_event.payload`).
-- documentation/DECISIONS_RUNTIME_BRIDGE.md   (D3: ThreadingHTTPServer
-  default di belakang port interface; amplop puluhan client SSE).
-
-Port interface (D3): `Transport` memisahkan logika wire — handler per
-endpoint, konkret di base — dari mekanisme server. Default
-`ThreadingHttpTransport` memakai stdlib `ThreadingHTTPServer` (zero
-dependency); transport asyncio dapat menggantikannya dengan mengimplementasi
-`serve_forever`/`stop` dan memakai handler yang sama; unit hilir (U32
-bridge) tidak berubah. Semua dependensi (registry, gate, control channel,
-component server, provider resolver) di-inject via constructor — tidak ada
-instance internal yang tidak bisa diganti fake (test).
-
-Amplop runtime:
-- Thread-per-connection (D3): satu thread per koneksi SSE panjang; pada
-  skala puluhan client, ganti transport di belakang interface, jangan tuning
-  default.
-- Provider (U14) sinkron dan mengembalikan SATU llm-response; untuk
-  `stream=true` transport meng-queue `llm-token` SEBELUM meresolve respons
-  (invarian F5, WIRE_PROTOCOL §4) — token = konten utuh respons (mirror
-  Rust stub `call_stream`).
-- Writer SSE dikunci per koneksi dan di-flush per frame (kontrak control.py:
-  writer dipanggil dari beberapa thread — keepalive, lifecycle, llm-token —
-  dan wajib aman untuk send).
-- CORS tidak dikontrak di transport Python (deployment concern; jalur E2E
-  bundle dimuat same-origin dari server ini).
+The transport validates browser origins and optional bearer credentials. Static
+jco artifacts are public because browser ESM imports cannot set auth headers.
+LLM streaming emits incremental SSE tokens; its complete HTTP response is the
+source of committed content. A reconnect is a new subscription, without replay.
+Use a different Transport implementation when thread-per-connection is unsuitable.
 """
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
@@ -111,9 +73,7 @@ def _lifecycle_envelope(client_id: str) -> Dict[str, Any]:
     }
 
 
-def _llm_token_envelope(
-    client_id: str, session_id: Optional[str], chunk: str
-) -> Dict[str, Any]:
+def _llm_token_envelope(client_id: str, session_id: Optional[str], chunk: str) -> Dict[str, Any]:
     """Envelope `llm-token` — shape golden `llm_token_event` persis."""
     return {
         "type": "llm-token",
@@ -133,6 +93,9 @@ class Transport(ABC):
     mengubah unit hilir). Semua handler mengembalikan
     `(status, body)` dengan body JSON-serializable; 204 -> `(204, None)`;
     file component -> `(200, bytes, mime)` atau None (404).
+
+
+    GET /antikythera/v1/events  (SSE control channel).
     """
 
     def __init__(
@@ -143,6 +106,8 @@ class Transport(ABC):
         component: Optional[ComponentServer] = None,
         provider_resolver: Optional[Callable[[Optional[str]], LlmProvider]] = None,
         client_id: str = DEFAULT_CLIENT_ID,
+        auth_token: Optional[str] = None,
+        allowed_origins: Optional[List[str]] = None,
     ) -> None:
         """Komposisi penuh: semua dependensi injectable (test memakai fake)."""
         if registry is None:
@@ -165,13 +130,12 @@ class Transport(ABC):
         self._component = component
         self._provider_resolver = provider_resolver
         self._client_id = client_id
+        self._auth_token = auth_token
+        self._allowed_origins = allowed_origins or []
 
-    # ------------------------------------------------------------------
-    # POST /antikythera/v1/llm/call  (+ ?stream=true)
-    # ------------------------------------------------------------------
 
     def handle_llm_call(
-        self, request_body: Any, stream: bool = False
+        self, request_body: Any, stream: bool = False, client_id: Optional[str] = None
     ) -> Tuple[int, Dict[str, Any]]:
         """Proxy LLM: resolve provider, panggil, kembalikan llm-response golden.
 
@@ -180,37 +144,53 @@ class Transport(ABC):
         token `llm-token` (chunk = konten utuh respons, mirror Rust stub
         `call_stream`) di-queue ke SSE channel SEBELUM respons di-resolve
         (invarian F5 — determinisme streaming JS, §4).
+
+
+        Normalisasi lewat parser golden: kunci persis llm_call_response, ekstra field dari
+        provider cacat ditolak keras (invarian 5).
+
+        F5: push SINKRON sebelum handler mengembalikan respons — penulisan frame ke socket SSE
+        terjadi sebelum respons HTTP llm/call di-resolve (hasil push diabaikan, mirror Rust
+        `let _`).
         """
         if not isinstance(request_body, dict):
             return (400, {"error": "llm-request must be an object"})
+        try:
+            self._gate.check_llm(request_body.get("session_id"))
+        except PermissionDeniedError as exc:
+            return (403, {"error": str(exc)})
         try:
             provider = self._provider_resolver(request_body.get("provider"))
         except Exception as exc:
             return (400, {"error": _error_message(exc)})
         try:
-            response = provider.call(request_body)
+            token_client = client_id or self._client_id
+
+            def emit(chunk: str) -> None:
+                self._control.push(
+                    token_client,
+                    _llm_token_envelope(token_client, request_body.get("session_id"), chunk),
+                )
+
+            response = (
+                provider.call_stream(request_body, emit)
+                if stream and callable(getattr(provider, "call_stream", None))
+                else provider.call(request_body)
+            )
         except Exception as exc:
             return (400, {"error": _error_message(exc)})
         if not isinstance(response, dict):
             return (500, {"error": "provider returned an invalid llm-response"})
-        # Normalisasi lewat parser golden: kunci persis llm_call_response,
-        # ekstra field dari provider cacat ditolak keras (invarian 5).
         normalized = wire_module.parse_llm_response(response)
-        if stream:
+        if stream and not callable(getattr(provider, "call_stream", None)):
             session_id = request_body.get("session_id")
             content = normalized.get("content")
             chunk = content if isinstance(content, str) else ""
-            # F5: push SINKRON sebelum handler mengembalikan respons —
-            # penulisan frame ke socket SSE terjadi sebelum respons HTTP
-            # llm/call di-resolve (hasil push diabaikan, mirror Rust `let _`).
             self._control.push(
                 self._client_id, _llm_token_envelope(self._client_id, session_id, chunk)
             )
         return (200, normalized)
 
-    # ------------------------------------------------------------------
-    # POST /antikythera/v1/tools/execute
-    # ------------------------------------------------------------------
 
     def handle_tools_execute(self, request_body: Any) -> Tuple[int, Dict[str, Any]]:
         """Eksekusi tool server/mcp di belakang gate (semantik routing.rs).
@@ -279,17 +259,11 @@ class Transport(ABC):
             },
         )
 
-    # ------------------------------------------------------------------
-    # GET /antikythera/v1/tools
-    # ------------------------------------------------------------------
 
     def handle_tools_list(self) -> Tuple[int, List[Dict[str, Any]]]:
         """Registry pull: array ToolDefinition shape golden (C1)."""
         return (200, self._registry.definitions())
 
-    # ------------------------------------------------------------------
-    # GET /antikythera/v1/events  (SSE control channel)
-    # ------------------------------------------------------------------
 
     def handle_events(
         self,
@@ -321,15 +295,10 @@ class Transport(ABC):
                 if not data:
                     break
         finally:
-            self._control.unregister_client(client_id)
+            self._control.unregister_client(client_id, writer)
 
-    # ------------------------------------------------------------------
-    # POST /antikythera/v1/events/{correlation-id}/response  (POST-back)
-    # ------------------------------------------------------------------
 
-    def handle_postback(
-        self, correlation_id: str, request_body: Any
-    ) -> Tuple[int, Optional[Any]]:
+    def handle_postback(self, correlation_id: str, request_body: Any) -> Tuple[int, Optional[Any]]:
         """POST-back: resolve correlation; selalu 204 (unknown/mismatch
         diabaikan + di-log oleh ControlChannel — mirror Rust http.rs)."""
         if not isinstance(request_body, dict):
@@ -337,9 +306,6 @@ class Transport(ABC):
         self._control.resolve_postback(correlation_id, request_body)
         return (204, None)
 
-    # ------------------------------------------------------------------
-    # GET /antikythera/v1/component/manifest + /component/{path}
-    # ------------------------------------------------------------------
 
     def handle_component_manifest(self) -> Tuple[int, Dict[str, Any]]:
         """Manifest bundle jco — shape golden `component_manifest` (D4)."""
@@ -354,9 +320,6 @@ class Transport(ABC):
         content, mime = resolved
         return (200, content, mime)
 
-    # ------------------------------------------------------------------
-    # Lifecycle server (port mechanism)
-    # ------------------------------------------------------------------
 
     @abstractmethod
     def serve_forever(self, host: str = "127.0.0.1", port: int = 0) -> None:
@@ -440,7 +403,24 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.debug("wire http: %s", fmt % args)
 
-    # -- entry points ----------------------------------------------------
+
+    def end_headers(self) -> None:
+        origin = self.headers.get("Origin")
+        if self.transport and origin in self.transport._allowed_origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Authorization, Content-Type, X-Antikythera-Client-Id",
+            )
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        super().end_headers()
+
+    def do_OPTIONS(self) -> None:
+        if self.transport and self.headers.get("Origin") in self.transport._allowed_origins:
+            self._send_empty(204)
+        else:
+            self._send_json(403, {"error": "permission: origin not allowed"})
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         self._dispatch()
@@ -449,12 +429,25 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
         self._dispatch()
 
     def _dispatch(self) -> None:
+        """Public static artifacts need no bearer header (ESM imports cannot set it).
+
+        Kontrak U22: decode SEBELUM resolve.
+        """
         transport = self.transport
         if transport is None:
             self._send_json(500, {"error": "transport not configured"})
             return
+        origin = self.headers.get("Origin")
+        if origin and origin not in transport._allowed_origins:
+            self._send_json(403, {"error": "permission: origin not allowed"})
+            return
         parsed = urlsplit(self.path)
-        path = unquote(parsed.path)  # kontrak U22: decode SEBELUM resolve
+        if transport._auth_token and not parsed.path.startswith(BASE_PATH):
+            expected = "Bearer " + transport._auth_token
+            if not hmac.compare_digest(self.headers.get("Authorization", ""), expected):
+                self._send_json(401, {"error": "permission: authentication required"})
+                return
+        path = unquote(parsed.path)
         query = parse_qs(parsed.query, keep_blank_values=True)
         status: int
         body: Any
@@ -468,10 +461,12 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
                 status, body = transport.handle_component_manifest()
                 self._send_json(status, body)
             elif path.startswith(BASE_PATH):
-                self._handle_component_file(path[len(BASE_PATH):])
+                self._handle_component_file(path[len(BASE_PATH) :])
             elif self.command == "POST" and path == wire_module.WIRE["LLM_CALL"]:
                 status, body = transport.handle_llm_call(
-                    self._read_json_body(), stream=query.get("stream") == ["true"]
+                    self._read_json_body(),
+                    stream=query.get("stream") == ["true"],
+                    client_id=self.headers.get("X-Antikythera-Client-Id"),
                 )
                 self._send_json(status, body)
             elif self.command == "POST" and path == wire_module.WIRE["TOOLS_EXECUTE"]:
@@ -480,9 +475,7 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
             else:
                 match = _POSTBACK_RE.match(path)
                 if self.command == "POST" and match is not None:
-                    status, body = transport.handle_postback(
-                        match.group(1), self._read_json_body()
-                    )
+                    status, body = transport.handle_postback(match.group(1), self._read_json_body())
                     if status == 204:
                         self._send_empty(204)
                     else:
@@ -498,9 +491,11 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-    # -- per-endpoint plumbing -------------------------------------------
 
     def _handle_sse(self, query: Dict[str, List[str]]) -> None:
+        """Writer dikunci per koneksi + flush per frame: kontrak control.py (dipanggil dari
+        keepalive/lifecycle/llm-token threads).
+        """
         client_id = (query.get("client_id") or [""])[0]
         if not client_id.strip():
             self._send_json(400, ERROR_CLIENT_ID_REQUIRED)
@@ -516,11 +511,7 @@ class _WireRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.flush()
-        # Writer dikunci per koneksi + flush per frame: kontrak control.py
-        # (dipanggil dari keepalive/lifecycle/llm-token threads).
-        transport.handle_events(
-            client_id, session_id, self._make_sse_writer(), self._sse_read
-        )
+        transport.handle_events(client_id, session_id, self._make_sse_writer(), self._sse_read)
 
     def _make_sse_writer(self) -> Callable[[bytes], None]:
         lock = threading.Lock()

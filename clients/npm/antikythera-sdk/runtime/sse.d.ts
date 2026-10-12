@@ -19,6 +19,7 @@ export type SseStatus =
 
 export interface SseChannel {
   start(): void;
+  ready(): Promise<void>;
   stop(): void;
 }
 
@@ -28,4 +29,5 @@ export function createSseChannel(options: {
   onEvent?: (envelope: SseEnvelope, meta: { id?: string }) => void;
   onStatus?: (status: SseStatus) => void;
   reconnect?: boolean;
+  timeoutMs?: number;
 }): SseChannel;

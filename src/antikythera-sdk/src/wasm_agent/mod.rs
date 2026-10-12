@@ -34,7 +34,6 @@ pub mod processor;
 pub mod runner;
 pub mod types;
 
-// Re-export main types
 pub use types::{
     AgentAction, AgentConfig as WasmAgentConfig, AgentMessage, AgentState, ContextPolicy,
     ContextSummary, PromptVariables, SloSnapshot, StreamEvent, StreamEventKind, TelemetrySnapshot,

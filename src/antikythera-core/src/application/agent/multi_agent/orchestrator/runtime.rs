@@ -33,13 +33,18 @@ pub(super) struct ExecuteTaskRuntime {
 /// free-standing so it can be cloned into async closures without carrying an
 /// orchestrator reference.
 ///
-/// # Hardening features wired here
+/// Execution enforces the following limits:
+///
 /// - Deadline pre-check (fail fast before any work starts)
 /// - Cancellation check (cancel token from orchestrator)
 /// - `budget_steps` cap (min of task budget and profile max_steps)
 /// - Per-task retry with `RetryCondition` gate
 /// - Full `TaskExecutionMetadata` including `RoutingDecision`
 /// - `ErrorKind` classification on every failure path
+///
+/// Timeouts are classified as transient failures. Retriable failures keep the
+/// same task identity, and the last attempted failure supplies the final error
+/// and classification when the retry policy is exhausted.
 pub(super) async fn execute_task<P: ModelProvider>(
     client: Arc<McpClient<P>>,
     task: AgentTask,
@@ -80,7 +85,6 @@ pub(super) async fn execute_task<P: ModelProvider>(
         );
     }
 
-    // ---- deadline pre-check ------------------------------------------------
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_millis(0))
@@ -107,7 +111,6 @@ pub(super) async fn execute_task<P: ModelProvider>(
         .with_metadata(metadata);
     }
 
-    // ---- cancellation pre-check --------------------------------------------
     if cancel_token.is_cancelled() {
         let metadata = TaskExecutionMetadata {
             cancelled: true,
@@ -128,10 +131,8 @@ pub(super) async fn execute_task<P: ModelProvider>(
     }
 
     let mut attempt: u8 = 0;
-    #[allow(unused_assignments)]
-    let mut last_error: Option<(String, ErrorKind)> = None;
 
-    loop {
+    let (error_msg, error_kind) = loop {
         let mid_context = GuardrailContext::new(
             budget.snapshot(),
             cancel_token.is_cancelled(),
@@ -150,7 +151,6 @@ pub(super) async fn execute_task<P: ModelProvider>(
             );
         }
 
-        // ---- per-attempt cancellation check --------------------------------
         if cancel_token.is_cancelled() {
             let metadata = TaskExecutionMetadata {
                 attempt_count: attempt,
@@ -199,7 +199,6 @@ pub(super) async fn execute_task<P: ModelProvider>(
             match tokio::time::timeout(Duration::from_millis(timeout_ms), run_future).await {
                 Ok(result) => result,
                 Err(_) => {
-                    // classify timeout as transient — could be a slow LLM
                     let should_retry = attempt <= retry_policy.max_retries
                         && retry_policy.condition != RetryCondition::Never;
 
@@ -298,22 +297,16 @@ pub(super) async fn execute_task<P: ModelProvider>(
                         RetryCondition::OnTransient => kind == ErrorKind::Transient,
                     };
 
-                last_error = Some((err_str, kind));
-
                 if should_retry {
                     if retry_policy.backoff_ms > 0 {
                         sleep(Duration::from_millis(retry_policy.backoff_ms)).await;
                     }
                     continue;
                 }
+                break (err_str, kind);
             }
         }
-
-        break;
-    }
-
-    let (error_msg, error_kind) =
-        last_error.unwrap_or_else(|| ("Task failed".to_string(), ErrorKind::Permanent));
+    };
     let metadata = TaskExecutionMetadata {
         attempt_count: attempt,
         duration_ms: started.elapsed().as_millis() as u64,
@@ -333,7 +326,7 @@ pub(super) async fn execute_task<P: ModelProvider>(
 /// Classify an agent error string as transient or permanent.
 ///
 /// This is a best-effort heuristic; callers can always override retry behaviour
-/// via [`TaskRetryPolicy::condition`].
+/// via [`super::super::task::TaskRetryPolicy::condition`].
 fn classify_agent_error(error: &str) -> ErrorKind {
     let lower = error.to_lowercase();
     if lower.contains("timeout")

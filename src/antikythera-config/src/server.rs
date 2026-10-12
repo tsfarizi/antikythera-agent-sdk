@@ -31,6 +31,10 @@ pub struct RawServer {
 }
 
 impl From<RawServer> for ServerConfig {
+    /// Select HTTP when a URL is configured, otherwise select stdio when a
+    /// command is configured, or builtin when neither field is present.
+    /// Native builds expand environment variables and home paths in commands,
+    /// working directories, and arguments; WASM builds retain the input text.
     fn from(raw: RawServer) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         let expand = |s: &str| -> String {
@@ -41,16 +45,12 @@ impl From<RawServer> for ServerConfig {
         #[cfg(target_arch = "wasm32")]
         let expand = |s: &str| -> String { s.to_string() };
 
-        // Determine transport type based on provided fields
         let (transport, command, url) = if let Some(url_str) = raw.url {
-            // HTTP transport
             (TransportType::Http, None, Some(url_str))
         } else if let Some(cmd_str) = raw.command {
-            // STDIO transport
             let command_expanded = PathBuf::from(expand(&cmd_str));
             (TransportType::Stdio, Some(command_expanded), None)
         } else {
-            // Default to Builtin (in-process handler)
             (TransportType::Builtin, None, None)
         };
 

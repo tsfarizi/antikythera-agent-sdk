@@ -43,13 +43,14 @@ impl ToolRegistry {
     }
 
     /// Validate a tool call: checks unknown tool and missing required params.
+    /// Empty registry = skip validation (tools not yet loaded).
+    ///
     pub fn validate_call(
         &self,
         tool_name: &str,
         arguments: &serde_json::Value,
     ) -> Result<(), ToolRunnerError> {
         if self.tools.is_empty() {
-            // Empty registry = skip validation (tools not yet loaded)
             return Ok(());
         }
 

@@ -62,7 +62,7 @@ def handle_tool_result(session_state_json: str, tool_result_json: str) -> str:
     return _decision("handle_tool_result", session_state_json, tool_result_json)
 
 
-def add_to_linker(linker: Any) -> None:
+def add_to_linker(linker: Any, provider_getter: Optional[Callable[[], Any]] = None) -> None:
     """Wire the runtime-hooks import into a wasmtime component linker.
 
     The wasmtime component ABI lifts the WIT ``result<string, string>`` as a
@@ -80,7 +80,17 @@ def add_to_linker(linker: Any) -> None:
 
     def wrap(decision_fn: Callable[[str, str], str]) -> Callable[..., Any]:
         def impl(_store: Any, first: str, second: str) -> Any:
-            return wasmtime.component.Variant("ok", decision_fn(first, second))
+            try:
+                if provider_getter is None:
+                    result = decision_fn(first, second)
+                else:
+                    method = getattr(provider_getter(), decision_fn.__name__, None)
+                    result = method(first, second) if callable(method) else _PASSTHROUGH_JSON
+                if not isinstance(result, str):
+                    result = json.dumps(result)
+                return wasmtime.component.Variant("ok", result)
+            except Exception as exc:
+                return wasmtime.component.Variant("err", str(exc))
 
         return impl
 

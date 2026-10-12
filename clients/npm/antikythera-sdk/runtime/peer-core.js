@@ -9,7 +9,7 @@ const {
 } = require('./types.js');
 const { createTransport } = require('./transport.js');
 const { createSseChannel } = require('./sse.js');
-const { createControlHandler, acquireRuntimeHooksProvider, releaseRuntimeHooksProvider } = require('./control.js');
+const { createControlHandler } = require('./control.js');
 const { createPolicyGate } = require('./policy.js');
 const { isTool, extractToolEntry } = require('./tools.js');
 
@@ -23,14 +23,9 @@ const { isTool, extractToolEntry } = require('./tools.js');
  */
 
 /**
- * @param {object} options
- * @param {string} options.serverUrl
- * @param {Array<{definition: object, handler: Function}>} [options.tools]
- * @param {object|null} [options.hooks]
- * @param {{allow?: Array<string>}} [options.policy]
- * @param {string} [options.clientId]
- * @param {string} [options.sessionId]
- * @returns {Promise<object>}
+ * Normalize tool classes and decorated handlers into validated registry entries.
+ * @param {Array<object>} [tools] - Client-owned tool definitions and handlers.
+ * @returns {Array<object>} Entries accepted by the local tool registry.
  */
 function normalizeLocalToolsWithSugar(tools) {
   if (!Array.isArray(tools) || tools.length === 0) return normalizeLocalTools(tools);
@@ -44,30 +39,39 @@ function normalizeLocalToolsWithSugar(tools) {
   return normalizeLocalTools(mapped);
 }
 
+/**
+ * Create a control-channel peer for a runner owned by the server.
+ * Client tools and hooks use this peer's registry and permission gate.
+ * @param {object} options
+ * @param {string} options.serverUrl
+ * @param {Array<{definition: object, handler: Function}>} [options.tools]
+ * @param {object|null} [options.hooks]
+ * @param {{allow?: Array<string>}} [options.policy]
+ * @param {string} [options.clientId]
+ * @param {string} [options.sessionId]
+ * @returns {Promise<object>}
+ */
 async function createServerCoreRuntime(options) {
   if (typeof options.serverUrl !== 'string' || !options.serverUrl) {
     throw new Error('createAgentRuntime: serverUrl is required');
   }
-  const transport = createTransport({ serverUrl: options.serverUrl });
   const clientId = options.clientId ?? randomId('client');
+  const transport = createTransport({ serverUrl: options.serverUrl, clientId, authToken: options.authToken, timeoutMs: options.timeoutMs });
   const sessionId = options.sessionId ?? null;
   const localEntries = normalizeLocalToolsWithSugar(options.tools);
   const gate = createPolicyGate(options.policy);
 
-  // Hooks provider ownership (R3): released only at close() so a coexisting
-  // runtime's provider survives this one's teardown.
-  const hooksOwnerToken = acquireRuntimeHooksProvider(options.hooks ?? null);
-
   const listeners = new Set();
   let connected = false;
   let channel = null;
+  let connectionPromise = null;
 
+  /** Deliver a progress event to every subscriber while isolating subscriber failures. */
   function emitEvent(event) {
     for (const listener of [...listeners]) {
       try {
         listener(event);
       } catch {
-        // a UI listener must not break the control channel
       }
     }
   }
@@ -107,13 +111,28 @@ async function createServerCoreRuntime(options) {
 
   async function connect() {
     if (connected) return;
-    channel = createSseChannel({
-      url: eventsUrl(),
-      onEvent: (envelope) => control.handle(envelope),
-      onStatus: (status) => emitEvent({ type: 'status', ...status }),
-    });
-    channel.start();
-    connected = true;
+    if (connectionPromise) return connectionPromise;
+    connectionPromise = (async () => {
+      const connectingChannel = createSseChannel({
+        url: eventsUrl(),
+        timeoutMs: options.timeoutMs,
+        headers: options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {},
+        onEvent: (envelope) => control.handle(envelope),
+        onStatus: (status) => emitEvent({ type: 'status', ...status }),
+      });
+      channel = connectingChannel;
+      try {
+        connectingChannel.start();
+        await connectingChannel.ready();
+        if (channel !== connectingChannel) throw new Error('runtime connection closed');
+        connected = true;
+      } catch (error) {
+        connectingChannel.stop();
+        if (channel === connectingChannel) channel = null;
+        throw error;
+      } finally { connectionPromise = null; }
+    })();
+    return connectionPromise;
   }
 
   function close() {
@@ -122,7 +141,6 @@ async function createServerCoreRuntime(options) {
       channel = null;
     }
     connected = false;
-    releaseRuntimeHooksProvider(hooksOwnerToken);
   }
 
   return {

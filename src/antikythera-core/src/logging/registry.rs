@@ -8,8 +8,9 @@ use crate::application::ports::logging::LogQueryPort;
 /// Static port instance for log queries.
 static LOG_QUERY: LazyLock<AntikytheraLogProvider> = LazyLock::new(|| AntikytheraLogProvider);
 
-// Re-exports for backward compatibility.
-// Prefer using the LogProvider / LogQueryPort traits instead.
+/// Re-exports for backward compatibility. Prefer using the LogProvider / LogQueryPort traits
+/// instead.
+///
 pub use antikythera_log::session_logger::{
     SessionLogger, clear_all_loggers, get_logger, logger_count,
 };

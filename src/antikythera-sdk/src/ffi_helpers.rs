@@ -64,10 +64,6 @@ pub unsafe extern "C" fn mcp_free_string(ptr: *mut c_char) {
     }
 }
 
-// ============================================================================
-// Unified FFI Handler Macro
-// ============================================================================
-
 /// Eliminates boilerplate for `extern "C"` FFI functions that follow the
 /// canonical pattern: parse C string → log → lock global → match guard.
 ///
@@ -87,8 +83,11 @@ pub unsafe extern "C" fn mcp_free_string(ptr: *mut c_char) {
 /// })
 /// ```
 #[macro_export]
+/// With input parsing + logger.
+///
+/// Without input (just guard check).
+///
 macro_rules! ffi_handler {
-    // With input parsing + logger
     ($fn_name:expr, $logger:expr, $input:expr, $global:expr, |$instance:ident| $($body:tt)*) => {{
         let input_str = match $crate::ffi_helpers::from_c_string($input) {
             Ok(s) => s,
@@ -107,7 +106,6 @@ macro_rules! ffi_handler {
             }
         }
     }};
-    // Without input (just guard check)
     ($fn_name:expr, $logger:expr, $global:expr, |$instance:ident| $($body:tt)*) => {{
         $logger.ffi_call($fn_name, "");
         let guard = $global.lock().unwrap();
@@ -122,51 +120,5 @@ macro_rules! ffi_handler {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn to_c_string_and_back_roundtrip() {
-        let original = "hello world";
-        let ptr = to_c_string(original);
-        assert!(!ptr.is_null());
-        let result = from_c_string(ptr).unwrap();
-        unsafe {
-            mcp_free_string(ptr);
-        }
-        assert_eq!(result, original);
-    }
-
-    #[test]
-    fn from_c_string_null_returns_error() {
-        let result = from_c_string(std::ptr::null());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn error_response_produces_valid_json() {
-        let ptr = error_response("something went wrong");
-        assert!(!ptr.is_null());
-        let json_str = from_c_string(ptr).unwrap();
-        unsafe {
-            mcp_free_string(ptr);
-        }
-        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(parsed["success"], false);
-        assert_eq!(parsed["error"], "something went wrong");
-    }
-
-    #[test]
-    fn serialize_result_produces_valid_json() {
-        let data = serde_json::json!({"status": "ok", "count": 42});
-        let ptr = serialize_result(&data);
-        assert!(!ptr.is_null());
-        let json_str = from_c_string(ptr).unwrap();
-        unsafe {
-            mcp_free_string(ptr);
-        }
-        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(parsed["status"], "ok");
-        assert_eq!(parsed["count"], 42);
-    }
-}
+#[path = "../../../tests/rust/unit/antikythera-sdk/ffi_helpers.tests.rs"]
+mod tests;

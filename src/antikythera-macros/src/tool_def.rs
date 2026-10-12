@@ -8,13 +8,15 @@ use syn::{Data, DeriveInput, Fields};
 use crate::attr_utils::{has_serde_default, parse_meta_bool, parse_meta_string};
 use crate::type_mapping::{JsonTypeKind, is_option_type, json_type_kind};
 
+/// Extracts #`tool(name = "...", description = "...")` from the struct.
+///
+/// Extracts fields from the struct.
+///
 pub(crate) fn impl_tool_def(input: &DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
 
-    // Extract #[tool(name = "...", description = "...")] from the struct.
     let (tool_name, tool_description) = extract_tool_attrs(input)?;
 
-    // Extract fields from the struct.
     let fields = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields) => fields,
@@ -98,6 +100,15 @@ pub(crate) struct ToolFieldMeta {
 /// `ToolPlugin`; the uniform required rule (Option / serde(default) /
 /// explicit `required = ...`) lives here so it cannot diverge between the two
 /// derives.
+/// Uniform required rule (shared with JsonSchema): a field is NOT required when it is `Option<T>`,
+/// carries `#[serde(default)]`, or is explicitly marked `required = false`. An explicit
+/// `#[tool_param(required = ...)]` always overrides the inference.
+///
+/// Builds property insertions. Custom types map to `$ref` so ToolDef and JsonSchema emit the same
+/// schema shape for the same type.
+///
+/// Placeholder definitions for every custom type, deduplicated by name.
+///
 pub(crate) fn collect_field_schema(
     fields: &syn::FieldsNamed,
 ) -> syn::Result<(Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>)> {
@@ -113,10 +124,6 @@ pub(crate) fn collect_field_schema(
         let is_option = is_option_type(&field.ty);
         let type_kind = json_type_kind(&field.ty);
 
-        // Uniform required rule (shared with JsonSchema): a field is NOT
-        // required when it is Option<T>, carries #[serde(default)], or is
-        // explicitly marked `required = false`. An explicit
-        // #[tool_param(required = ...)] always overrides the inference.
         let required = if is_option || has_default {
             param_required.unwrap_or(false)
         } else {
@@ -136,8 +143,6 @@ pub(crate) fn collect_field_schema(
         });
     }
 
-    // Build property insertions. Custom types map to `$ref` so ToolDef and
-    // JsonSchema emit the same schema shape for the same type.
     let property_inserts: Vec<TokenStream> = field_meta
         .iter()
         .map(|meta| match &meta.kind {
@@ -175,7 +180,6 @@ pub(crate) fn collect_field_schema(
         })
         .collect();
 
-    // Placeholder definitions for every custom type, deduplicated by name.
     let mut seen_defs = HashSet::new();
     let definition_inserts: Vec<TokenStream> = field_meta
         .iter()

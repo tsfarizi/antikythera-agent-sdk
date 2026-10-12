@@ -67,6 +67,9 @@ pub struct LoopOutcome {
 
 /// Run the tool loop on the current thread (the core thread). Blocking: the
 /// caller must not be a tokio worker (host functions block on the runtime).
+/// Builtin in-band: the composite already emitted a tool_result for this tool inside commit — no
+/// host execution needed.
+///
 pub fn run_tool_loop(
     core: &mut CoreSession,
     shared: &SharedState,
@@ -160,8 +163,6 @@ pub fn run_tool_loop(
                 let events: Value = serde_json::from_str(&events_json)
                     .map_err(|e| format!("tool loop: drained events are not JSON: {e}"))?;
 
-                // Builtin in-band: the composite already emitted a tool_result
-                // for this tool inside commit — no host execution needed.
                 let in_band = events.as_array().is_some_and(|arr| {
                     arr.iter().any(|event| {
                         event["kind"] == "tool_result"
@@ -200,14 +201,5 @@ pub fn run_tool_loop(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_config_disables_runtime_hooks() {
-        let config = ToolLoopConfig::default();
-        assert!(!config.runtime_hooks_enabled);
-        assert!(!config.force_json);
-        assert_eq!(config.max_steps, 10);
-    }
-}
+#[path = "../../../tests/rust/unit/antikythera-server-runtime/loop_owner.tests.rs"]
+mod tests;

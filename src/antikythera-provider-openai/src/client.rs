@@ -9,8 +9,6 @@ use antikythera_macros::PortValidate;
 pub struct OpenAiClient {
     id: String,
     api_key: String,
-    #[allow(dead_code)]
-    model: String,
     endpoint: String,
     client: reqwest::Client,
 }
@@ -24,7 +22,6 @@ impl OpenAiClient {
         Ok(Self {
             id,
             api_key: api_key.to_string(),
-            model: model.to_string(),
             endpoint: "https://api.openai.com/v1".to_string(),
             client: reqwest::Client::new(),
         })
@@ -38,7 +35,6 @@ impl OpenAiClient {
         Ok(Self {
             id,
             api_key: api_key.to_string(),
-            model: model.to_string(),
             endpoint: endpoint.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
         })

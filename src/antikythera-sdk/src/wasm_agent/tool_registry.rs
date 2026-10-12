@@ -16,10 +16,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ============================================================================
-// Tool Call / Result
-// ============================================================================
-
 /// Tool call record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
@@ -46,12 +42,10 @@ pub struct ToolResult {
     pub step_id: u32,
 }
 
-// ============================================================================
-// Tool Registry (MCP tool definitions for WASM-side validation)
-// ============================================================================
-
 /// Icon metadata for a tool, as defined by MCP spec.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Tool Registry (MCP tool definitions for WASM-side validation).
+///
 pub struct ToolIcon {
     pub src: String,
     #[serde(default)]
@@ -306,11 +300,9 @@ impl ToolRegistry {
     }
 }
 
-// ============================================================================
-// Conversions from core domain types
-// ============================================================================
-
 #[cfg(feature = "component")]
+/// Conversions from core domain types.
+///
 impl From<antikythera_core::domain::entities::ToolCall> for ToolCall {
     fn from(core_call: antikythera_core::domain::entities::ToolCall) -> Self {
         let arguments =

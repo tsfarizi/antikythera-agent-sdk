@@ -9,8 +9,6 @@ use antikythera_macros::PortValidate;
 pub struct OllamaClient {
     id: String,
     endpoint: String,
-    #[allow(dead_code)]
-    model: String,
     client: reqwest::Client,
 }
 
@@ -24,7 +22,6 @@ impl OllamaClient {
         Self {
             id,
             endpoint: endpoint.trim_end_matches('/').to_string(),
-            model: model.to_string(),
             client: reqwest::Client::new(),
         }
     }

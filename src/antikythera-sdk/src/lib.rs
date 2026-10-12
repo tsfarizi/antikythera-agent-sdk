@@ -2,23 +2,19 @@
 //!
 //! Server-side WASM component framework for the MCP client.
 
-// Re-export core types
 pub use antikythera_core::application::agent::{Agent, AgentOptions, AgentOutcome};
 pub use antikythera_core::application::client::{ClientConfig, McpClient};
 pub use antikythera_core::config::AppConfig;
 
-// Multi-agent orchestration types (native only - requires Send futures)
 #[cfg(not(target_arch = "wasm32"))]
+/// Multi-agent orchestration types (native only - requires Send futures).
+///
 pub use antikythera_core::application::agent::multi_agent::{
     AgentProfile, AgentRegistry, AgentRole, AgentTask, BudgetSnapshot, CancellationToken,
     ContextId, ErrorKind, ManagedSession, MemoryConfig, OrchestratorBudget,
     OrchestratorSessionManager, PipelineResult, RetryCondition, RoutingDecision, SessionError,
     SyncMemoryProvider, TaskExecutionMetadata, TaskResult, TaskRetryPolicy,
 };
-
-// ============================================================================
-// Vertical Slice Features
-// ============================================================================
 
 /// Agent orchestration helpers (native only)
 #[cfg(not(target_arch = "wasm32"))]

@@ -5,9 +5,9 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "test": "node --test test/session-manager-remove.test.mjs test/registry-parity.test.mjs test/hooks-ownership.test.mjs test/component-base.test.mjs test/orchestrator-node.test.mjs",
+    "test": "node --test ../../../tests/node/session-manager-remove.test.mjs ../../../tests/node/registry-parity.test.mjs ../../../tests/node/hooks-ownership.test.mjs ../../../tests/node/component-base.test.mjs ../../../tests/node/core-module-names.test.mjs ../../../tests/node/orchestrator-node.test.mjs ../../../tests/node/tools.test.mjs ../../../tests/node/runtime-consistency.test.mjs ../../../tests/node/delivery.test.mjs",
     "prepublishOnly": "npm run pack-smoke",
-    "pack-smoke": "node ../../scripts/pack-smoke.mjs"
+    "pack-smoke": "node ../../../tests/packaging/pack-smoke.mjs"
   },
   "files": [
     "index.js",
@@ -17,12 +17,22 @@
     "component",
     "runtime",
     "core",
-    "plugin"
+    "plugin",
+    "delivery"
   ],
   "exports": {
-    ".": { "types": "./index.d.ts", "default": "./index.js" },
-    "./core": { "types": "./core/index.d.ts", "default": "./core/index.js" },
-    "./plugin": { "types": "./plugin/index.d.ts", "default": "./plugin/index.js" },
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./core": {
+      "types": "./core/index.d.ts",
+      "default": "./core/index.js"
+    },
+    "./plugin": {
+      "types": "./plugin/index.d.ts",
+      "default": "./plugin/index.js"
+    },
     "./runtime": {
       "types": "./runtime/index.d.ts",
       "default": "./runtime/index.js"
@@ -31,7 +41,15 @@
       "types": "./component/antikythera-sdk.d.ts",
       "default": "./component/antikythera-sdk.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./component/instantiate": {
+      "types": "./component/instantiate.d.ts",
+      "default": "./component/instantiate.js"
+    },
+    "./delivery": {
+      "types": "./delivery/index.d.ts",
+      "default": "./delivery/index.js"
+    }
   },
   "keywords": [
     "agent",

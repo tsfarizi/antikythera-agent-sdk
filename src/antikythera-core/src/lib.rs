@@ -30,18 +30,19 @@ pub mod security;
 /// Unified logging system for all core operations
 pub mod logging;
 
-// Re-export commonly used types
 pub use application::agent::events::DomainEvent;
 pub use application::agent::{Agent, AgentOptions, AgentOutcome, ToolDescriptor};
 
-// Re-export agent client types for backward compatibility
+/// Re-export agent client types for backward compatibility.
+///
 pub use application::agent::client::{
     ChatRequest, ChatResult, ClientConfig, ClientConfigSnapshot, McpError, PreparedChatTurn,
 };
 
 pub use config::AppConfig;
 
-// Re-export WASM boundary bridge trait for ergonomic `antikythera_core::WasmBridge`
+/// Re-export WASM boundary bridge trait for ergonomic `antikythera_core::WasmBridge`.
+///
 pub use infrastructure::wasm_bridge::WasmBridge;
 
 /// Crate version

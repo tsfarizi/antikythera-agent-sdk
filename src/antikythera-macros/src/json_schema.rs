@@ -10,6 +10,10 @@ use syn::{Data, DeriveInput, Fields};
 use crate::attr_utils::has_serde_default;
 use crate::type_mapping::{JsonTypeKind, is_option_type, json_type_kind, unwrap_option_type};
 
+/// Collect property insertions, required field names, and definition insertions.
+///
+/// Deduplicate definitions: keep only the first occurrence of each type name.
+///
 pub(crate) fn impl_json_schema(input: &DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
 
@@ -31,10 +35,8 @@ pub(crate) fn impl_json_schema(input: &DeriveInput) -> syn::Result<TokenStream> 
         }
     };
 
-    // Collect property insertions, required field names, and definition insertions.
     let mut prop_inserts: Vec<TokenStream> = Vec::new();
     let mut required_names: Vec<String> = Vec::new();
-    // (type_name, definition_schema_expr)
     let mut def_inserts: Vec<(String, TokenStream)> = Vec::new();
 
     for field in fields {
@@ -57,7 +59,6 @@ pub(crate) fn impl_json_schema(input: &DeriveInput) -> syn::Result<TokenStream> 
         }
     }
 
-    // Deduplicate definitions: keep only the first occurrence of each type name.
     let mut seen_defs = std::collections::HashSet::new();
     let unique_def_inserts: Vec<TokenStream> = def_inserts
         .into_iter()
@@ -116,9 +117,12 @@ pub(crate) fn impl_json_schema(input: &DeriveInput) -> syn::Result<TokenStream> 
 /// decision table lives in one place shared with `ToolDef`; this function only
 /// renders the richer shapes (`items` for collections, definitions for nested
 /// custom types).
+/// `Option<T>` is transparent for rendering: `Option<Vec<T>>` is an array of T, so the unwrapped
+/// type owns the generic arguments.
+///
+/// Nested struct — generate $ref and a placeholder definition.
+///
 fn field_type_schema(ty: &syn::Type) -> syn::Result<(TokenStream, Vec<(String, TokenStream)>)> {
-    // Option<T> is transparent for rendering: `Option<Vec<T>>` is an array of
-    // T, so the unwrapped type owns the generic arguments.
     let target = unwrap_option_type(ty);
     match json_type_kind(target) {
         JsonTypeKind::Primitive(keyword) => {
@@ -140,7 +144,6 @@ fn field_type_schema(ty: &syn::Type) -> syn::Result<(TokenStream, Vec<(String, T
             }
         }
         JsonTypeKind::Custom(type_name) => {
-            // Nested struct — generate $ref and a placeholder definition.
             let ref_str = format!("#/definitions/{}", type_name);
             let schema = quote! { serde_json::json!({"$ref": #ref_str}) };
             let definition = quote! { serde_json::json!({"type": "object"}) };

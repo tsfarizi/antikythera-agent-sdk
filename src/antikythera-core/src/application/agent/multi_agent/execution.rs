@@ -7,16 +7,16 @@
 use serde::{Deserialize, Serialize};
 use std::thread;
 
-/// Controls how the [`TaskScheduler`] dispatches tasks to agents.
+/// Controls how the [`super::scheduler::TaskScheduler`] dispatches tasks to agents.
 ///
 /// # Choosing a mode
 ///
 /// | Scenario | Recommended mode |
 /// |---|---|
-/// | General-purpose (default) | [`Auto`] |
-/// | WASM or deterministic ordering | [`Sequential`] |
-/// | Single-thread async interleaving | [`Concurrent`] |
-/// | Explicit CPU-bound parallelism | [`Parallel`] |
+/// | General-purpose (default) | [`ExecutionMode::Auto`] |
+/// | WASM or deterministic ordering | [`ExecutionMode::Sequential`] |
+/// | Single-thread async interleaving | [`ExecutionMode::Concurrent`] |
+/// | Explicit CPU-bound parallelism | [`ExecutionMode::Parallel`] |
 ///
 /// # FFI / WASM host usage
 ///
@@ -71,22 +71,22 @@ pub enum ExecutionMode {
 }
 
 impl ExecutionMode {
-    /// Construct an [`Auto`] mode value.
+    /// Construct an [`ExecutionMode::Auto`] mode value.
     pub fn auto() -> Self {
         Self::Auto
     }
 
-    /// Construct a [`Sequential`] mode value.
+    /// Construct a [`ExecutionMode::Sequential`] mode value.
     pub fn sequential() -> Self {
         Self::Sequential
     }
 
-    /// Construct a [`Concurrent`] mode value.
+    /// Construct a [`ExecutionMode::Concurrent`] mode value.
     pub fn concurrent() -> Self {
         Self::Concurrent
     }
 
-    /// Construct a [`Parallel`] mode value with the given worker limit.
+    /// Construct a [`ExecutionMode::Parallel`] mode value with the given worker limit.
     pub fn parallel(workers: usize) -> Self {
         Self::Parallel {
             workers: workers.max(1),
@@ -116,10 +116,10 @@ impl ExecutionMode {
     /// Parse from a human-readable spec string.
     ///
     /// Accepted formats:
-    /// - `"auto"` → [`Auto`]
-    /// - `"sequential"` → [`Sequential`]
-    /// - `"concurrent"` → [`Concurrent`]
-    /// - `"parallel:N"` where N is a positive integer → [`Parallel { workers: N }`]
+    /// - `"auto"` → [`ExecutionMode::Auto`]
+    /// - `"sequential"` → [`ExecutionMode::Sequential`]
+    /// - `"concurrent"` → [`ExecutionMode::Concurrent`]
+    /// - `"parallel:N"` where N is a positive integer → [`ExecutionMode::Parallel`]
     ///
     /// Returns `None` for unrecognised strings.
     pub fn from_spec(s: &str) -> Option<Self> {
@@ -135,7 +135,7 @@ impl ExecutionMode {
         }
     }
 
-    /// Serialise to the spec string accepted by [`from_spec`].
+    /// Serialise to the spec string accepted by [`Self::from_spec`].
     pub fn to_spec(self) -> String {
         match self {
             Self::Auto => "auto".to_string(),

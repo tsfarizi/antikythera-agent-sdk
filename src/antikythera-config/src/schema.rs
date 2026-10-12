@@ -2,7 +2,7 @@
 //!
 //! All struct definitions that represent the on-disk and runtime configuration
 //! live here.  Format-specific code (TOML loading, serialization) resides in
-//! sibling modules [`super::app`], [`super::loader`], and [`super::serializer`].
+//! sibling modules [`crate::app`], [`crate::loader`], and [`crate::serializer`].
 
 use antikythera_domain::security::SecurityConfig;
 use serde::{Deserialize, Serialize};
@@ -161,16 +161,14 @@ impl PromptsConfig {
     }
 }
 
-// ============================================================================
-// Provider / Model / Agent configuration
-// ============================================================================
-
 /// Provider definition stored in the config file.
 ///
 /// This is a generic configuration schema — core does not interpret
 /// `provider_type` or `endpoint` semantics. Each provider adapter
 /// is responsible for interpreting its own configuration fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Provider / Model / Agent configuration.
+///
 pub struct ProviderConfig {
     /// Unique provider ID used as routing key
     pub id: String,
@@ -225,10 +223,6 @@ impl Default for AgentConfig {
     }
 }
 
-// ============================================================================
-// Canonical AppConfig
-// ============================================================================
-
 /// Unified application configuration.
 ///
 /// This is the **single source of truth** for both the on-disk TOML file
@@ -239,7 +233,6 @@ impl Default for AgentConfig {
 /// CLI) are marked `#[serde(skip)]` and default to empty/`None`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
-    // ── TOML-serialized fields ──────────────────────────────────────────────
     /// REST server bind / CORS / docs settings.
     pub server: RestServerConfig,
     /// LLM provider catalogue.
@@ -259,7 +252,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub custom: HashMap<String, String>,
 
-    // ── Runtime-only fields (not persisted to TOML) ────────────────────────
     /// Optional system prompt override (set by CLI flag or TUI).
     #[serde(skip)]
     pub system_prompt: Option<String>,
@@ -297,10 +289,6 @@ impl AppConfig {
         self.prompts.template()
     }
 }
-
-// ============================================================================
-// MCP Server configuration
-// ============================================================================
 
 /// Transport type for MCP server connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,10 +354,6 @@ impl ServerConfig {
         self.url.as_deref()
     }
 }
-
-// ============================================================================
-// Tool configuration
-// ============================================================================
 
 /// Configuration for an available tool.
 ///

@@ -79,8 +79,6 @@ impl SessionStore {
         }
     }
 
-    // ── internal helpers ─────────────────────────────────────────────────────
-
     /// Move `session_id` to the back of the access-order deque (most recent).
     ///
     /// If the session is new and the store is at capacity, the front entry

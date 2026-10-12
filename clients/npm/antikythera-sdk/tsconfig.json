@@ -8,11 +8,12 @@
     "skipLibCheck": true,
     "types": [],
     "paths": {
-      "node:test": ["./test/shims/node-test.ts"]
+      "node:test": ["../../../tests/node/shims/node-test.ts"]
     }
   },
   "include": [
     "index.d.ts",
-    "runtime/**/*.d.ts"
+    "runtime/**/*.d.ts",
+    "delivery/**/*.d.ts"
   ]
 }

@@ -1,9 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Streaming and Telemetry
-// ============================================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamEventKind {

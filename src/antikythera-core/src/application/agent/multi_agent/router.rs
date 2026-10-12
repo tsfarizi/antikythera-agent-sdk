@@ -9,16 +9,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::registry::AgentProfile;
 use super::task::AgentTask;
 
-// ============================================================================
-// Trait
-// ============================================================================
-
 /// Routing contract for multi-agent task dispatch.
 ///
 /// # Implementation notes
 ///
 /// - Implementations must be `Send + Sync` to work across async tasks.
-/// - [`route`] receives an immutable slice of *references* to registered
+/// - [`AgentRouter::route`] receives an immutable slice of *references* to registered
 ///   profiles.  The return value is an `Option<&AgentProfile>` pointing into
 ///   that slice — no allocation needed for the common case.
 /// - Returning `None` means the orchestrator will produce a
@@ -48,19 +44,15 @@ pub trait AgentRouter: Send + Sync {
 
     /// Optional human-readable reason describing *why* `profile` was selected.
     ///
-    /// Called by the orchestrator after a successful [`route`] call to populate
+    /// Called by the orchestrator after a successful [`AgentRouter::route`] call to populate
     /// [`RoutingDecision::reason`].  The default implementation returns `None`.
     ///
-    /// [`route`]: AgentRouter::route
+    /// [`AgentRouter::route`]: AgentRouter::route
     /// [`RoutingDecision::reason`]: super::task::RoutingDecision::reason
     fn routing_reason(&self, _task: &AgentTask, _profile: &AgentProfile) -> Option<String> {
         None
     }
 }
-
-// ============================================================================
-// DirectRouter
-// ============================================================================
 
 /// Routes tasks directly to the agent specified by `task.agent_id`.
 ///
@@ -93,16 +85,12 @@ impl AgentRouter for DirectRouter {
     }
 }
 
-// ============================================================================
-// RoundRobinRouter
-// ============================================================================
-
 /// Distributes tasks evenly across registered agents using a rotating counter.
 ///
 /// Thread-safe: the counter uses an `AtomicUsize` so multiple async tasks can
-/// call [`route`] concurrently.
+/// call [`AgentRouter::route`] concurrently.
 ///
-/// [`route`]: AgentRouter::route
+/// [`AgentRouter::route`]: AgentRouter::route
 #[derive(Debug, Default)]
 pub struct RoundRobinRouter {
     counter: AtomicUsize,
@@ -138,10 +126,6 @@ impl AgentRouter for RoundRobinRouter {
     }
 }
 
-// ============================================================================
-// FirstAvailableRouter
-// ============================================================================
-
 /// Always routes to the first agent in the registry.
 ///
 /// This is the default router.  It works well for single-agent setups and as
@@ -169,10 +153,6 @@ impl AgentRouter for FirstAvailableRouter {
         ))
     }
 }
-
-// ============================================================================
-// RoleRouter
-// ============================================================================
 
 /// Routes tasks to an agent whose `role` matches the value stored under a
 /// specified metadata key.

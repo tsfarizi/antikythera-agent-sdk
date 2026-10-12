@@ -66,11 +66,12 @@ impl StreamingResponse for InMemoryStreamingResponse {
         }
     }
 
+    /// Phase 2 filtering: honour include_tool_results / include_summaries flags.
+    ///
     fn push_event(&mut self, event: AgentEvent) {
         if !self.request.wants_events() {
             return;
         }
-        // Phase 2 filtering: honour include_tool_results / include_summaries flags.
         if let Some(p2) = self.request.phase2.as_ref() {
             match &event {
                 AgentEvent::ToolResult { .. } if !p2.include_tool_results => return,

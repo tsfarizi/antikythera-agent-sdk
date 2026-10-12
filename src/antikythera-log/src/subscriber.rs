@@ -6,10 +6,6 @@ use crate::entries::LogEntry;
 use crate::logger::Logger;
 use crossbeam_channel::{Receiver, Sender};
 
-// ============================================================================
-// Subscriber Types
-// ============================================================================
-
 /// Sender side (held by Logger)
 pub type LogSender = Sender<LogEntry>;
 

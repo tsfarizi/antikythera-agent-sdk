@@ -45,6 +45,16 @@ pub(crate) fn parse_meta_bool(
 /// form (`rename_all`, `with`, `bound(...)`, ...) by skipping it. A
 /// malformed `default` value (`#[serde(default = 123)]`) is a `syn::Error`
 /// instead of a silent interpretation.
+/// #`serde(default)` or #`serde(default = "path")`.
+///
+/// Unknown serde meta with a value: consume it so parsing can continue. Its semantics belong to
+/// serde's own derive.
+///
+/// Unknown serde meta with a nested list (e.g. `bound(...)`): consume its content; serde owns its
+/// semantics.
+///
+/// Bare unknown serde metas (`skip`, `flatten`, ...) consume nothing.
+///
 pub(crate) fn has_serde_default(attrs: &[syn::Attribute]) -> syn::Result<bool> {
     for attr in attrs {
         if !attr.path().is_ident("serde") {
@@ -55,23 +65,17 @@ pub(crate) fn has_serde_default(attrs: &[syn::Attribute]) -> syn::Result<bool> {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("default") {
                 found_default = true;
-                // #[serde(default)] or #[serde(default = "path")].
                 if meta.input.peek(syn::Token![=]) {
                     let value = meta.value()?;
                     let _: syn::LitStr = value.parse()?;
                 }
             } else if meta.input.peek(syn::Token![=]) {
-                // Unknown serde meta with a value: consume it so parsing can
-                // continue. Its semantics belong to serde's own derive.
                 let _: syn::Expr = meta.value()?.parse()?;
             } else if meta.input.peek(syn::token::Paren) {
-                // Unknown serde meta with a nested list (e.g. `bound(...)`):
-                // consume its content; serde owns its semantics.
                 let content;
                 syn::parenthesized!(content in meta.input);
                 let _: proc_macro2::TokenStream = content.parse()?;
             }
-            // Bare unknown serde metas (`skip`, `flatten`, ...) consume nothing.
             Ok(())
         })?;
 

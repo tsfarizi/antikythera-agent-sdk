@@ -7,7 +7,7 @@ use serde_json::Value;
 ///
 /// The `Final` variant preserves the full JSON value returned by the model
 /// rather than flattening it to a `String`.  Callers that need a plain text
-/// response can call [`Value::to_string`] or pattern-match on [`Value::String`].
+/// response can call `Value::to_string` or pattern-match on [`Value::String`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum AgentDirective {

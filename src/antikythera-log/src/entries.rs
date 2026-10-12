@@ -3,10 +3,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-// ============================================================================
-// Log Level
-// ============================================================================
-
 /// Log level severity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,10 +51,6 @@ impl fmt::Display for LogLevel {
         write!(f, "{}", self.as_str())
     }
 }
-
-// ============================================================================
-// Log Entry
-// ============================================================================
 
 /// A single log entry with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,10 +146,6 @@ impl fmt::Display for LogEntry {
     }
 }
 
-// ============================================================================
-// Log Filter
-// ============================================================================
-
 /// Filter for querying logs
 #[derive(Debug, Clone, Default)]
 pub struct LogFilter {
@@ -227,12 +215,10 @@ impl LogFilter {
     }
 }
 
-// ============================================================================
-// Log Batch (for efficient transfer)
-// ============================================================================
-
 /// Batch of log entries for efficient transfer
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Log Batch (for efficient transfer).
+///
 pub struct LogBatch {
     /// Log entries
     pub entries: Vec<LogEntry>,

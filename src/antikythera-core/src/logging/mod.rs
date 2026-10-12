@@ -18,10 +18,10 @@
 //!
 //! ## Sub-modules
 //!
-//! - [`context`] -- [`SessionContext`] for propagating session IDs through
+//! - [`crate::logging::context`] -- [`crate::logging::SessionContext`] for propagating session IDs through
 //!   the call stack without relying on global state.
-//! - [`provider`] -- The concrete [`LogProvider`] implementation
-//!   ([`provider::AntikytheraLogProvider`]) that bridges port traits to
+//! - [`crate::logging::provider`] -- The concrete [`crate::application::ports::logging::LogProvider`] implementation
+//!   ([`crate::logging::provider::AntikytheraLogProvider`]) that bridges port traits to
 //!   `antikythera_log`.
 
 pub mod context;

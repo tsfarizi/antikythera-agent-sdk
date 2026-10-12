@@ -16,9 +16,9 @@ use crate::StorageEngine;
 pub fn api_routes(engine: Arc<Mutex<StorageEngine>>) -> Router {
     Router::new()
         .route("/sessions", axum::routing::get(list_sessions))
-        .route("/sessions/:id", axum::routing::get(get_session))
-        .route("/sessions/:id", axum::routing::post(save_session))
-        .route("/sessions/:id", axum::routing::delete(delete_session))
+        .route("/sessions/{id}", axum::routing::get(get_session))
+        .route("/sessions/{id}", axum::routing::post(save_session))
+        .route("/sessions/{id}", axum::routing::delete(delete_session))
         .route("/health", axum::routing::get(health_check))
         .with_state(engine)
 }

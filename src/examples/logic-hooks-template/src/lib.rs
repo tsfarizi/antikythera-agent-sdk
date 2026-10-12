@@ -19,7 +19,7 @@
 //! Build the component:
 //!
 //! ```text
-//! cargo component build -p logic-hooks-template --release --target wasm32-wasip2 --no-default-features --features component
+//! cargo build -p logic-hooks-template --release --target wasm32-wasip2 --no-default-features --features component
 //! ```
 //!
 //! The artifact exports `antikythera:agent-sdk/logic-hooks@1.0.0` and can be
@@ -27,7 +27,7 @@
 
 /// Custom `prepare-turn` behavior.
 ///
-/// TODO: isi logika host.
+/// Applications implement this hook to override the SDK decision at this pipeline point.
 /// `None` = passthrough (SDK default prepared turn).
 /// `Some(json)` = override; the object is merged over the SDK default
 /// prepared turn (hook fields are authoritative).
@@ -37,7 +37,7 @@ pub fn custom_prepare_turn(_request_json: &str, _session_state_json: &str) -> Op
 
 /// Custom `decide-action` behavior.
 ///
-/// TODO: isi logika host.
+/// Applications implement this hook to override the SDK decision at this pipeline point.
 /// `None` = passthrough (SDK default action decision).
 /// `Some(json)` = override; the object is merged over the SDK default
 /// commit-result envelope (`action`, `content`, ... are authoritative).
@@ -47,7 +47,7 @@ pub fn custom_decide_action(_session_state_json: &str, _llm_response_json: &str)
 
 /// Custom `handle-tool-result` behavior.
 ///
-/// TODO: isi logika host.
+/// Applications implement this hook to override the SDK decision at this pipeline point.
 /// `None` = passthrough (SDK default tool-result processing).
 /// `Some(json)` = override; the object replaces the reported tool result.
 pub fn custom_handle_tool_result(

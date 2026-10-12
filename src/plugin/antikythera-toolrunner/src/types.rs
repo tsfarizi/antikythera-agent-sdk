@@ -5,10 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Tool Definition
-// ============================================================================
-
 /// A single parameter within a tool's input schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolParameterSchema {
@@ -90,10 +86,6 @@ impl ToolDefinition {
         }
     }
 }
-
-// ============================================================================
-// Tool Call / Result
-// ============================================================================
 
 /// A tool call request from the agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]

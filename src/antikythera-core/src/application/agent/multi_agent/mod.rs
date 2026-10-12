@@ -32,7 +32,8 @@
 //! // MultiAgentOrchestrator::new expects Arc<McpClient<P>> (concrete generic),
 //! // not a trait object. The McpClient is provided by antikythera-sdk.
 //! # async fn run(client: Arc<antikythera_core::application::tooling::interface::ServerManager>) {
-//! # let orch = MultiAgentOrchestrator::new(/* client */, ExecutionMode::Auto);
+//! # let orch = MultiAgentOrchestrator::new(client, ExecutionMode::Auto);
+//! # }
 //! ```
 //!
 //! [`Agent`]: crate::application::agent::runner::Agent
@@ -48,10 +49,8 @@ pub mod scheduler;
 pub mod session;
 pub mod task;
 
-// ============================================================================
-// Convenient re-exports (maintain backwards compatibility)
-// ============================================================================
-
+/// Convenient re-exports (maintain backwards compatibility).
+///
 pub use budget::{BudgetSnapshot, OrchestratorBudget};
 pub use cancellation::{CancellationSnapshot, CancellationToken};
 pub use execution::ExecutionMode;

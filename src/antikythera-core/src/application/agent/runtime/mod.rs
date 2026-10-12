@@ -25,6 +25,8 @@ pub struct ToolRuntime {
 }
 
 impl ToolRuntime {
+    /// Default limit to 10 concurrent tools.
+    ///
     pub fn new(configs: Vec<ToolConfig>, bridge: Arc<dyn ToolServerInterface>) -> Self {
         let index = configs
             .iter()
@@ -36,7 +38,7 @@ impl ToolRuntime {
             configs,
             index,
             bridge,
-            execution_semaphore: Arc::new(Semaphore::new(10)), // Default limit to 10 concurrent tools
+            execution_semaphore: Arc::new(Semaphore::new(10)),
             fallback_response_keys: vec!["response".into(), "content".into(), "message".into()],
         }
     }

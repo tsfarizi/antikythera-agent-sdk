@@ -1,6 +1,8 @@
 """Type stubs for Antikythera Agent Runtime."""
 
 from antikythera_agent.agent import Agent as Agent
+from antikythera_agent.delivery import AgentDeployment as AgentDeployment
+from antikythera_agent.delivery import DeliveryServer as DeliveryServer
 from antikythera_agent.orchestrator import Orchestrator as Orchestrator
 from antikythera_agent.prompts import PromptConfig as PromptConfig
 from antikythera_agent.prompts import PromptManager as PromptManager

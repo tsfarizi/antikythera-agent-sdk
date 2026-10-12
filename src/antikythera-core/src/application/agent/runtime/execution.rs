@@ -116,6 +116,10 @@ impl ToolRuntime {
         }
     }
 
+    /// Apply bounded concurrency backpressure using semaphore.
+    ///
+    /// Track execution wait and process times individually.
+    ///
     pub(crate) async fn execute_parallel(
         &self,
         tools: Vec<(String, Value)>,
@@ -128,7 +132,6 @@ impl ToolRuntime {
             let ctx = ctx.clone();
 
             futures.push(async move {
-                // Apply bounded concurrency backpressure using semaphore
                 let _permit = runtime.execution_semaphore.acquire().await.map_err(|_| {
                     ToolError::Execution {
                         tool: tool_name.clone(),
@@ -137,8 +140,6 @@ impl ToolRuntime {
                         },
                     }
                 })?;
-
-                // Track execution wait and process times individually
 
                 runtime.execute(&tool_name, input, &ctx).await
             });

@@ -113,7 +113,7 @@ tasks:
       - wit
     cmds:
       - echo "Building standalone SDK WASM component..."
-      - cargo component build -p antikythera-sdk --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo build -p antikythera-sdk --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK standalone SDK component built: {{.WASM_BINARY}}"'
       - task: size
@@ -122,7 +122,7 @@ tasks:
     desc: Build standalone toolrunner WASM component (wasm32-wasip2, feature component)
     cmds:
       - echo "Building standalone toolrunner WASM component..."
-      - cargo component build -p antikythera-toolrunner --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo build -p antikythera-toolrunner --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK standalone toolrunner component built: {{.TOOLRUNNER_BINARY}}"'
       - task: size
@@ -131,7 +131,7 @@ tasks:
     desc: Build standalone default-hooks WASM component (wasm32-wasip2, feature component)
     cmds:
       - echo "Building standalone default-hooks WASM component..."
-      - cargo component build -p antikythera-default-hooks --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo build -p antikythera-default-hooks --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK standalone default-hooks component built: {{.DEFAULT_HOOKS_BINARY}}"'
       - task: size
@@ -140,7 +140,7 @@ tasks:
     desc: Build standalone logic-core template WASM component (wasm32-wasip2, feature component)
     cmds:
       - echo "Building standalone logic-core template WASM component..."
-      - cargo component build -p logic-core-template --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo build -p logic-core-template --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK logic-core template component built: {{.LOGIC_CORE_TEMPLATE_BINARY}}"'
       - task: size
@@ -149,7 +149,7 @@ tasks:
     desc: Build standalone logic-core example WASM component (wasm32-wasip2, feature component)
     cmds:
       - echo "Building standalone logic-core example WASM component..."
-      - cargo component build -p logic-core-example --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo build -p logic-core-example --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK logic-core example component built: {{.LOGIC_CORE_EXAMPLE_BINARY}}"'
       - task: size
@@ -172,7 +172,7 @@ tasks:
       - task: size
 
   compose-hooks-custom:
-    desc: Compose SDK + toolrunner + CUSTOM hooks into dist/antikythera-sdk-custom.wasm. Requires HOOKS_COMPONENT=<path to a built custom logic-hooks .wasm>; the file must be kebab-case named because wasm-tools compose rejects underscore filenames (build the hooks crate with the component feature first, e.g. cargo component build -p logic-hooks-example --target wasm32-wasip2 --release --no-default-features --features component, then cp target/wasm32-wasip2/release/logic_hooks_example.wasm target/wasm32-wasip2/release/logic-hooks-example.wasm).
+    desc: Compose SDK + toolrunner + CUSTOM hooks into dist/antikythera-sdk-custom.wasm. Requires HOOKS_COMPONENT=<path to a built custom logic-hooks .wasm>; the file must be kebab-case named because wasm-tools compose rejects underscore filenames (build the hooks crate with the component feature first, e.g. cargo build -p logic-hooks-example --target wasm32-wasip2 --release --no-default-features --features component, then cp target/wasm32-wasip2/release/logic_hooks_example.wasm target/wasm32-wasip2/release/logic-hooks-example.wasm).
     deps:
       - build-wasm-harness
       - build-toolrunner
@@ -242,40 +242,15 @@ tasks:
       - compose
     cmds:
       - echo "Transpiling composite WASM component with jco..."
-      # jco has no --dts flag (typescript output is default); the 13 -M flags
-      # map the host `runtime-hooks` import to the local runtime-hooks.js stub
-      # plus every WASI interface the component imports to local stubs under
-      # the output directory (clients/npm/antikythera-sdk/component/wasi-stubs).
-      - |
-        npx --prefix clients jco transpile dist/antikythera-sdk.wasm --out-dir clients/npm/antikythera-sdk/component \
-          -M "antikythera:agent-sdk/runtime-hooks@1.0.0=./runtime-hooks.js" \
-          -M "wasi:cli/environment@0.2.3=./wasi-stubs/environment.js" \
-          -M "wasi:cli/exit@0.2.3=./wasi-stubs/exit.js" \
-          -M "wasi:cli/stderr@0.2.3=./wasi-stubs/stderr.js" \
-          -M "wasi:cli/stdin@0.2.3=./wasi-stubs/stdin.js" \
-          -M "wasi:cli/stdout@0.2.3=./wasi-stubs/stdout.js" \
-          -M "wasi:clocks/monotonic-clock@0.2.3=./wasi-stubs/monotonic-clock.js" \
-          -M "wasi:clocks/wall-clock@0.2.3=./wasi-stubs/wall-clock.js" \
-          -M "wasi:filesystem/preopens@0.2.3=./wasi-stubs/preopens.js" \
-          -M "wasi:filesystem/types@0.2.3=./wasi-stubs/types.js" \
-          -M "wasi:io/error@0.2.3=./wasi-stubs/error.js" \
-          -M "wasi:io/streams@0.2.3=./wasi-stubs/streams.js" \
-          -M "wasi:random/random@0.2.3=./wasi-stubs/random.js"
-      # jco emits opaque numbered core modules; rename to semantic names
-      # (runner / tool-registry / logic-hooks-passthrough / wasi-*) and
-      # rewrite the './antikythera-sdk.coreN.wasm' literals in the loader.
-      - node src/scripts/post-transpile-rename.mjs
+      - node src/scripts/transpile-client.mjs
       - echo ""
       - echo "✓ Transpiled to clients/npm/antikythera-sdk/component"
 
   transpile-clean:
-    desc: Remove transpiled JS output directory
+    desc: Remove generated jco entries while preserving source adapters and WASI stubs
     cmds:
       - echo "Cleaning transpiled output..."
-      - |
-        if [ -d "clients/npm/antikythera-sdk/component" ]; then
-          rm -rf "clients/npm/antikythera-sdk/component"
-        fi
+      - node src/scripts/transpile-client.mjs --clean
       - echo "✓ Transpile output clean complete"
 
   # ===========================================================================

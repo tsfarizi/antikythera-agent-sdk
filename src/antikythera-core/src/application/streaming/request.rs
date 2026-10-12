@@ -63,10 +63,10 @@ pub struct StreamingPhase2Options {
     /// Flush policy for buffering events before delivery.
     #[serde(default)]
     pub buffer_policy: super::buffer::BufferPolicy,
-    /// Forward [`AgentEvent::ToolResult`] chunks to the host.
+    /// Forward [`super::types::AgentEvent::ToolResult`] chunks to the host.
     #[serde(default = "default_true")]
     pub include_tool_results: bool,
-    /// Forward [`AgentEvent::Summary`] chunks from context management to the host.
+    /// Forward [`super::types::AgentEvent::Summary`] chunks from context management to the host.
     #[serde(default = "default_true")]
     pub include_summaries: bool,
 }

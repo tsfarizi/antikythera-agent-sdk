@@ -14,10 +14,6 @@ use tokio::sync::Semaphore;
 use super::execution::ExecutionMode;
 use super::task::TaskResult;
 
-// ============================================================================
-// TaskScheduler
-// ============================================================================
-
 /// Drives batches of tasks according to the configured [`ExecutionMode`].
 ///
 /// # Generic parameters
@@ -59,6 +55,17 @@ impl TaskScheduler {
     /// - `T: Send + 'static` — required when tasks are moved into spawned tasks.
     /// - `F: Clone + 'static` — the executor is cloned for each spawned task.
     /// - `Fut: Send + 'static` — spawned futures must be sendable across threads.
+    ///
+    /// Sequential: await tasks one by one in order.
+    ///
+    /// Concurrent: poll all futures simultaneously, no spawning.
+    ///
+    /// Auto: spawn each task as an independent tokio task.
+    ///
+    /// Parallel: spawn tasks with a semaphore-based concurrency limit.
+    ///
+    /// Collect task IDs before moving tasks into closures.
+    ///
     pub async fn run<T, F, Fut>(&self, tasks: Vec<T>, executor: F) -> Vec<TaskResult>
     where
         T: Send + 'static,
@@ -70,9 +77,6 @@ impl TaskScheduler {
         }
 
         match self.mode {
-            // ----------------------------------------------------------------
-            // Sequential: await tasks one by one in order
-            // ----------------------------------------------------------------
             ExecutionMode::Sequential => {
                 let mut results = Vec::with_capacity(tasks.len());
                 for task in tasks {
@@ -81,18 +85,12 @@ impl TaskScheduler {
                 results
             }
 
-            // ----------------------------------------------------------------
-            // Concurrent: poll all futures simultaneously, no spawning
-            // ----------------------------------------------------------------
             ExecutionMode::Concurrent => {
                 let futs: FuturesUnordered<_> =
                     tasks.into_iter().map(|t| executor.clone()(t)).collect();
                 futs.collect().await
             }
 
-            // ----------------------------------------------------------------
-            // Auto: spawn each task as an independent tokio task
-            // ----------------------------------------------------------------
             ExecutionMode::Auto => {
                 let handles: Vec<_> = tasks
                     .into_iter()
@@ -116,13 +114,9 @@ impl TaskScheduler {
                 results
             }
 
-            // ----------------------------------------------------------------
-            // Parallel: spawn tasks with a semaphore-based concurrency limit
-            // ----------------------------------------------------------------
             ExecutionMode::Parallel { workers } => {
                 let sem = Arc::new(Semaphore::new(workers.max(1)));
 
-                // Collect task IDs before moving tasks into closures
                 let handles: Vec<_> = tasks
                     .into_iter()
                     .map(|t| {

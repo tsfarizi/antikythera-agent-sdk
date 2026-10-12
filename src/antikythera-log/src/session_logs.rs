@@ -5,10 +5,6 @@
 use crate::entries::*;
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Session Log Export
-// ============================================================================
-
 /// Logs exported for a specific session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionLogExport {
@@ -65,7 +61,6 @@ impl SessionLogExport {
         let export: SessionLogExport =
             serde_json::from_str(json).map_err(|e| format!("Deserialize error: {}", e))?;
 
-        // Validate version
         if export.version != Self::VERSION {
             return Err(format!(
                 "Unsupported export version: {}. Expected: {}",
@@ -74,7 +69,6 @@ impl SessionLogExport {
             ));
         }
 
-        // Validate session_id consistency
         for entry in &export.logs {
             if let Some(entry_session) = &entry.session_id
                 && entry_session != &export.session_id
@@ -89,10 +83,6 @@ impl SessionLogExport {
         Ok(export)
     }
 }
-
-// ============================================================================
-// Batch Session Log Export
-// ============================================================================
 
 /// Multiple session logs exported together
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +142,6 @@ impl BatchLogExport {
         let export: BatchLogExport =
             serde_json::from_str(json).map_err(|e| format!("Deserialize error: {}", e))?;
 
-        // Validate version
         if export.version != Self::VERSION {
             return Err(format!(
                 "Unsupported export version: {}. Expected: {}",
@@ -161,7 +150,6 @@ impl BatchLogExport {
             ));
         }
 
-        // Validate each session's logs
         for session in &export.sessions {
             if session.version != SessionLogExport::VERSION {
                 return Err(format!(

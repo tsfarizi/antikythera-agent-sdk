@@ -140,7 +140,6 @@ impl SecretManager {
             SecretManagerError::SecretNotFound(id.to_string())
         })?;
 
-        // Deactivate old versions
         for secret in entry.iter_mut() {
             secret.metadata.active = false;
         }
@@ -279,10 +278,6 @@ impl Drop for SecretManager {
         self.rotation_task.take();
     }
 }
-
-// ---------------------------------------------------------------------------
-// antikythera_ports::SecretStore implementation
-// ---------------------------------------------------------------------------
 
 #[async_trait::async_trait]
 impl antikythera_ports::SecretStore for SecretManager {

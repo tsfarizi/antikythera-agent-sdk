@@ -31,13 +31,6 @@ mod client_chat;
 mod client_lifecycle;
 mod client_tools;
 
-#[allow(unused_imports)]
-pub use client_chat::*;
-#[allow(unused_imports)]
-pub use client_lifecycle::*;
-#[allow(unused_imports)]
-pub use client_tools::*;
-
 use super::session_store::{DEFAULT_MAX_SESSIONS, SessionStore};
 use super::tooling::{
     ServerManager, ToolServerInterface, TransportFactory, transport::McpTransport,
@@ -266,7 +259,7 @@ pub struct ClientConfigSnapshot {
 /// Each session is identified by a `session_id` string.  History is stored
 /// in-memory in a `Mutex<SessionStore>` and is scoped to the lifetime of this
 /// instance.  The store evicts least-recently-used sessions once
-/// `max_sessions` is exceeded (default: [`DEFAULT_MAX_SESSIONS`]).
+/// `max_sessions` is exceeded (default: `DEFAULT_MAX_SESSIONS`).
 /// Use [`McpClient::prune_session`] to trim old messages before a request
 /// when the conversation grows long.
 pub struct McpClient<P: ModelProvider> {
@@ -281,7 +274,7 @@ impl<P: ModelProvider> McpClient<P> {
     ///
     /// A [`ServerManager`] is created from `config.servers` and stored as the
     /// active [`ToolServerInterface`].  Session history starts empty with a
-    /// default LRU capacity of [`DEFAULT_MAX_SESSIONS`].
+    /// default LRU capacity of `DEFAULT_MAX_SESSIONS`.
     pub fn new(
         provider: P,
         config: ClientConfig,

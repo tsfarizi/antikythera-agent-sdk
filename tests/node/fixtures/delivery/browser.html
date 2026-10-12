@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <title>Agent delivery verification</title>
+  <h1>Agent delivery verification</h1>
+  <pre id="result">Running the delivered agent in this browser...</pre>
+  <script type="module">
+    import { createAgent } from "../agent.js";
+    const resultElement = document.getElementById("result");
+    try {
+      const agent = await createAgent();
+      try {
+        const result = await agent.run("Run the configured client capability");
+        const tool = agent.getState().tool_results.delivery_receipt;
+        if (
+          result.output !== "delivered-7" ||
+          result.stepsUsed !== 2 ||
+          tool.execution !== "browser"
+        ) {
+          throw new Error(
+            "The configured tool did not execute inside this browser",
+          );
+        }
+        document.title = "PASS: WASM/jco agent delivery";
+        resultElement.textContent = JSON.stringify(
+          {
+            status: "PASS",
+            output: result.output,
+            steps: result.stepsUsed,
+            tool,
+          },
+          null,
+          2,
+        );
+      } finally {
+        agent.close();
+      }
+    } catch (error) {
+      document.title = "FAIL: WASM/jco agent delivery";
+      resultElement.textContent = String(error.stack ?? error);
+    }
+  </script>
+</html>

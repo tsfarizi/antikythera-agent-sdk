@@ -18,7 +18,8 @@ secara eksplisit lewat `PermissionDeniedError` (transport HTTP 403, postback
 
 from __future__ import annotations
 
-from typing import Dict, FrozenSet, Set
+import threading
+from typing import Dict, FrozenSet, Optional, Set
 
 #: Destination yang dikontrak E13 — nilai identik dengan wire.WIRE OWNER_*;
 #: gate berdiri sendiri dan tidak bergantung pada wire.py.
@@ -49,13 +50,39 @@ def _denied(reason: str) -> PermissionDeniedError:
 
 
 class PolicyGate:
-    """Allowlist tool per destination dan allowlist hook; default deny (R4)."""
+    """Allowlist tool per destination dan allowlist hook; default deny (R4).
 
-    def __init__(self) -> None:
+
+    -- snapshot allowlist (immutable; tidak membocorkan state internal) -.
+    """
+
+    def __init__(self, llm_quota: Optional[int] = None) -> None:
         self._tools: Dict[str, Set[str]] = {d: set() for d in DESTINATIONS}
         self._hooks: Set[str] = set()
+        self._llm_lock = threading.Lock()
+        self._llm_calls: Dict[str, int] = {}
+        self.set_llm_quota(llm_quota)
 
-    # -- konfigurasi ----------------------------------------------------
+    def set_llm_quota(self, quota: Optional[int]) -> None:
+        if quota is not None and (
+            not isinstance(quota, int) or isinstance(quota, bool) or quota < 0
+        ):
+            raise ValueError("llm quota must be a non-negative integer or None")
+        with self._llm_lock:
+            self.llm_quota = quota
+
+    def check_llm(self, session_id: Optional[str] = None) -> None:
+        with self._llm_lock:
+            if self.llm_quota is None:
+                return
+            key = session_id or "default"
+            if key not in self._llm_calls and len(self._llm_calls) >= 1024:
+                raise _denied("llm session capacity exceeded")
+            used = self._llm_calls.get(key, 0)
+            if used >= self.llm_quota:
+                raise _denied("llm quota exceeded")
+            self._llm_calls[key] = used + 1
+
 
     def allow_tool(self, destination: str, name: str) -> None:
         """Izinkan tool `name` untuk `destination` saja; destination lain
@@ -71,7 +98,6 @@ class PolicyGate:
             raise TypeError(f"hook name must be a string, got {type(name).__name__}")
         self._hooks.add(name)
 
-    # -- pemeriksaan (denial = exception berprefix permission:) ---------
 
     def check_tool(self, destination: str, name: str) -> None:
         """Gagal dengan `PermissionDeniedError` bila tool tidak di-allowlist.
@@ -88,7 +114,6 @@ class PolicyGate:
         if name not in self._hooks:
             raise _denied(f"hook '{name}' not allowed")
 
-    # -- query boolean (mirror JS `allows`; bukan bypass eksekusi) -------
 
     def allows(self, destination: str, name: str) -> bool:
         """True bila tool di-allowlist destination (mirror policy.js `allows`)."""
@@ -99,7 +124,6 @@ class PolicyGate:
         """True bila hook di-allow."""
         return name in self._hooks
 
-    # -- snapshot allowlist (immutable; tidak membocorkan state internal) -
 
     def allowed_tools(self, destination: str) -> FrozenSet[str]:
         """Snapshot immutable allowlist tool `destination`."""
@@ -110,7 +134,6 @@ class PolicyGate:
         """Snapshot immutable allowlist hook."""
         return frozenset(self._hooks)
 
-    # -- entry-point guard ------------------------------------------------
 
     def _check_destination(self, destination: str) -> None:
         """Destination tak dikenal adalah program error, BUKAN denial:

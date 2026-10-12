@@ -31,6 +31,13 @@ pub(crate) fn is_option_type(ty: &syn::Type) -> bool {
 /// Primitive mappings are stable: string/integer/number/boolean, with `array`
 /// for collections. Unknown named types (structs, enums, aliases, ...) map to
 /// a `$ref` placeholder instead of a lossy "string" default.
+/// `Option<T>` is transparent: classify the inner type.
+///
+/// Malformed `Option` without a type argument.
+///
+/// Non-path types (tuples, references, function pointers, ...) carry no resolvable name; keep the
+/// historical "string" default for them.
+///
 pub(crate) fn json_type_kind(ty: &syn::Type) -> JsonTypeKind {
     if let syn::Type::Path(type_path) = ty
         && let Some(segment) = type_path.path.segments.last()
@@ -45,20 +52,16 @@ pub(crate) fn json_type_kind(ty: &syn::Type) -> JsonTypeKind {
             "bool" => JsonTypeKind::Primitive("boolean"),
             "Vec" | "VecDeque" | "BTreeSet" | "HashSet" | "LinkedList" => JsonTypeKind::Array,
             "Option" => {
-                // Option<T> is transparent: classify the inner type.
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
                     && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
                 {
                     return json_type_kind(inner);
                 }
-                // Malformed `Option` without a type argument.
                 JsonTypeKind::Primitive("string")
             }
             _ => JsonTypeKind::Custom(ident),
         }
     } else {
-        // Non-path types (tuples, references, function pointers, ...) carry no
-        // resolvable name; keep the historical "string" default for them.
         JsonTypeKind::Primitive("string")
     }
 }

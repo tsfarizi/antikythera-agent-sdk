@@ -11,10 +11,24 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput};
 
+/// Collect enum variant names in declaration order.
+///
+/// Parses the #`fsm_transitions(...)` attribute, preserving attribute order so the generated
+/// const is deterministic (variant order, not map order).
+///
+/// Validate: all states in the matrix exist in the enum.
+///
+/// Validate: all enum variants appear in the transition matrix.
+///
+/// Validate: every state has at least one outgoing transition.
+///
+/// Generate a const block with compile-time assertions.
+///
+/// Generate the associated const exposing the matrix in variant order.
+///
 pub(crate) fn impl_fsm_complete(input: &DeriveInput) -> syn::Result<TokenStream> {
     let enum_name = &input.ident;
 
-    // Only enums are supported.
     let variants = match &input.data {
         Data::Enum(data_enum) => &data_enum.variants,
         _ => {
@@ -25,11 +39,8 @@ pub(crate) fn impl_fsm_complete(input: &DeriveInput) -> syn::Result<TokenStream>
         }
     };
 
-    // Collect enum variant names in declaration order.
     let enum_variants: Vec<String> = variants.iter().map(|v| v.ident.to_string()).collect();
 
-    // Parse the #[fsm_transitions(...)] attribute, preserving attribute order
-    // so the generated const is deterministic (variant order, not map order).
     let transitions = parse_fsm_transitions(input)?;
 
     let mut transition_matrix = std::collections::HashMap::new();
@@ -37,7 +48,6 @@ pub(crate) fn impl_fsm_complete(input: &DeriveInput) -> syn::Result<TokenStream>
         transition_matrix.insert(source.clone(), targets.clone());
     }
 
-    // Validate: all states in the matrix exist in the enum.
     for source_state in transition_matrix.keys() {
         if !enum_variants.contains(source_state) {
             return Err(syn::Error::new_spanned(
@@ -61,7 +71,6 @@ pub(crate) fn impl_fsm_complete(input: &DeriveInput) -> syn::Result<TokenStream>
         }
     }
 
-    // Validate: all enum variants appear in the transition matrix.
     for variant in &enum_variants {
         if !transition_matrix.contains_key(variant) {
             return Err(syn::Error::new_spanned(
@@ -74,7 +83,6 @@ pub(crate) fn impl_fsm_complete(input: &DeriveInput) -> syn::Result<TokenStream>
         }
     }
 
-    // Validate: every state has at least one outgoing transition.
     for (source, targets) in &transition_matrix {
         if targets.is_empty() {
             return Err(syn::Error::new_spanned(
@@ -84,10 +92,8 @@ pub(crate) fn impl_fsm_complete(input: &DeriveInput) -> syn::Result<TokenStream>
         }
     }
 
-    // Generate a const block with compile-time assertions.
     let assertions = generate_fsm_assertions(enum_name, &enum_variants, &transition_matrix);
 
-    // Generate the associated const exposing the matrix in variant order.
     let matrix_const = generate_transition_matrix(enum_name, &enum_variants, &transition_matrix);
 
     let expanded = quote! {
@@ -125,11 +131,12 @@ struct FsmTransitionsAttr {
 }
 
 impl syn::parse::Parse for FsmTransitionsAttr {
+    /// Optionally consume a trailing comma.
+    ///
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let mut transitions = Vec::new();
         while !input.is_empty() {
             transitions.push(input.parse::<FsmTransition>()?);
-            // Optionally consume a trailing comma.
             if input.peek(syn::Token![,]) {
                 let _: syn::Token![,] = input.parse()?;
             }
@@ -183,6 +190,9 @@ fn parse_fsm_transitions(input: &DeriveInput) -> syn::Result<Vec<(String, Vec<St
 ///
 /// Source states are ordered by enum variant declaration order (deterministic,
 /// independent of any hash-map iteration). Target lists keep attribute order.
+/// Validation above guarantees every variant is a matrix source with at least one target, so the
+/// lookup cannot miss.
+///
 fn generate_transition_matrix(
     enum_name: &syn::Ident,
     enum_variants: &[String],
@@ -191,8 +201,6 @@ fn generate_transition_matrix(
     let entries: Vec<TokenStream> = enum_variants
         .iter()
         .map(|variant| {
-            // Validation above guarantees every variant is a matrix source with
-            // at least one target, so the lookup cannot miss.
             let targets = &transition_matrix[variant];
             let target_lits: Vec<&str> = targets.iter().map(|t| t.as_str()).collect();
             quote! {
@@ -213,12 +221,22 @@ fn generate_transition_matrix(
 }
 
 /// Generate compile-time assertions for FSM validation.
+/// Builds a set of all states that are targets of transitions (reachable states).
+///
+/// Generate error messages for unreachable states (except the first state which is the initial
+/// state).
+///
+/// Generate error messages for states with no outgoing transitions.
+///
+/// Generate error messages for states in matrix but not in enum.
+///
+/// Verify that the enum type exists (ensures the macro is used on a valid type).
+///
 fn generate_fsm_assertions(
     enum_name: &syn::Ident,
     enum_variants: &[String],
     transition_matrix: &std::collections::HashMap<String, Vec<String>>,
 ) -> TokenStream {
-    // Build a set of all states that are targets of transitions (reachable states).
     let mut reachable = std::collections::HashSet::new();
     for targets in transition_matrix.values() {
         for target in targets {
@@ -226,7 +244,6 @@ fn generate_fsm_assertions(
         }
     }
 
-    // Generate error messages for unreachable states (except the first state which is the initial state).
     let mut unreachable_errors = Vec::new();
     if let Some(first_variant) = enum_variants.first() {
         for variant in enum_variants {
@@ -242,7 +259,6 @@ fn generate_fsm_assertions(
         }
     }
 
-    // Generate error messages for states with no outgoing transitions.
     let mut no_outgoing_errors = Vec::new();
     for variant in enum_variants {
         if !transition_matrix.contains_key(variant) {
@@ -261,7 +277,6 @@ fn generate_fsm_assertions(
         }
     }
 
-    // Generate error messages for states in matrix but not in enum.
     let mut unknown_state_errors = Vec::new();
     for source in transition_matrix.keys() {
         if !enum_variants.contains(source) {
@@ -293,7 +308,6 @@ fn generate_fsm_assertions(
         #( #no_outgoing_errors )*
         #( #unknown_state_errors )*
 
-        // Verify that the enum type exists (ensures the macro is used on a valid type).
         let _: #enum_name;
     }
 }

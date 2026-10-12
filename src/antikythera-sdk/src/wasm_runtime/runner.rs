@@ -8,10 +8,6 @@ use wasmtime::{Caller, Engine, Extern, Linker, Module, Store};
 
 use antikythera_core::domain::task::{AgentTask, TaskResult};
 
-// ============================================================================
-// Error type
-// ============================================================================
-
 #[derive(Debug, Error)]
 pub enum WasmRuntimeError {
     #[error("wasmtime error: {0}")]
@@ -26,16 +22,8 @@ pub enum WasmRuntimeError {
     Io(#[from] std::io::Error),
 }
 
-// ============================================================================
-// Host state
-// ============================================================================
-
 /// State threaded through the wasmtime `Store` during a single task run.
 struct HostState {}
-
-// ============================================================================
-// WasmAgentRunner
-// ============================================================================
 
 /// Runs a pre-compiled WASM agent module as a sandboxed [`AgentTask`] executor.
 ///
@@ -73,10 +61,6 @@ pub struct WasmAgentRunner {
 }
 
 impl WasmAgentRunner {
-    // ----------------------------------------------------------------
-    // Constructors
-    // ----------------------------------------------------------------
-
     /// Load a WASM agent from raw bytes.
     pub fn from_bytes(agent_id: impl Into<String>, wasm: &[u8]) -> Result<Self, WasmRuntimeError> {
         let engine = Engine::default();
@@ -101,10 +85,6 @@ impl WasmAgentRunner {
     pub fn agent_id(&self) -> &str {
         &self.agent_id
     }
-
-    // ----------------------------------------------------------------
-    // Task execution
-    // ----------------------------------------------------------------
 
     /// Execute an [`AgentTask`] inside the WASM sandbox.
     ///
@@ -139,10 +119,30 @@ impl WasmAgentRunner {
         }
     }
 
-    // ----------------------------------------------------------------
-    // Internal synchronous execution
-    // ----------------------------------------------------------------
-
+    /// Registers the `call_llm_sync` host import.
+    ///
+    /// Read request JSON from WASM memory.
+    ///
+    /// Allocate space in WASM memory for the response.
+    ///
+    /// Split typed-check from call to avoid simultaneous &/&mut borrow.
+    ///
+    /// Write the response into WASM memory.
+    ///
+    /// Serialise the task to JSON.
+    ///
+    /// Allocate space in WASM memory for the task JSON.
+    ///
+    /// Write task JSON into WASM memory.
+    ///
+    /// Read the result JSON from WASM memory.
+    ///
+    /// Free the result memory if dealloc is available.
+    ///
+    /// Try to parse as a full TaskResult; fall back to wrapping raw string.
+    ///
+    /// The module returned raw text — wrap it in a successful TaskResult.
+    ///
     fn run_task_sync<F>(&self, task: AgentTask, llm_handler: Arc<F>) -> TaskResult
     where
         F: Fn(String) -> String + Send + Sync + 'static,
@@ -152,14 +152,10 @@ impl WasmAgentRunner {
 
         let mut linker: Linker<HostState> = Linker::new(&self.engine);
 
-        // ----------------------------------------------------------------
-        // Register the `call_llm_sync` host import
-        // ----------------------------------------------------------------
         if let Err(e) = linker.func_wrap(
             "antikythera",
             "call_llm_sync",
             move |mut caller: Caller<'_, HostState>, req_ptr: i32, req_len: i32| -> i64 {
-                // Read request JSON from WASM memory
                 let req_json = match Self::read_wasm_string(&mut caller, req_ptr, req_len) {
                     Some(s) => s,
                     None => return -1,
@@ -173,7 +169,6 @@ impl WasmAgentRunner {
                 let response_bytes = response.into_bytes();
                 let response_len = response_bytes.len() as i32;
 
-                // Allocate space in WASM memory for the response
                 let alloc_fn = match caller.get_export("antikythera_alloc").and_then(|e| {
                     if let Extern::Func(f) = e {
                         Some(f)
@@ -185,7 +180,6 @@ impl WasmAgentRunner {
                     None => return -2,
                 };
 
-                // Split typed-check from call to avoid simultaneous &/&mut borrow
                 let typed_alloc = match alloc_fn.typed::<i32, i32>(&caller) {
                     Ok(t) => t,
                     Err(_) => return -3,
@@ -195,7 +189,6 @@ impl WasmAgentRunner {
                     Err(_) => return -3,
                 };
 
-                // Write the response into WASM memory
                 if let Err(()) = Self::write_wasm_bytes(&mut caller, result_ptr, &response_bytes) {
                     return -4;
                 }
@@ -217,9 +210,6 @@ impl WasmAgentRunner {
             );
         }
 
-        // ----------------------------------------------------------------
-        // Instantiate the module
-        // ----------------------------------------------------------------
         let instance = match linker.instantiate(&mut store, &self.module) {
             Ok(i) => i,
             Err(e) => {
@@ -231,9 +221,6 @@ impl WasmAgentRunner {
             }
         };
 
-        // ----------------------------------------------------------------
-        // Serialise the task to JSON
-        // ----------------------------------------------------------------
         let task_json = match serde_json::to_string(&task) {
             Ok(j) => j,
             Err(e) => {
@@ -247,9 +234,6 @@ impl WasmAgentRunner {
         let task_bytes = task_json.as_bytes();
         let task_len = task_bytes.len() as i32;
 
-        // ----------------------------------------------------------------
-        // Allocate space in WASM memory for the task JSON
-        // ----------------------------------------------------------------
         let alloc = match instance.get_typed_func::<i32, i32>(&mut store, "antikythera_alloc") {
             Ok(f) => f,
             Err(_) => {
@@ -272,7 +256,6 @@ impl WasmAgentRunner {
             }
         };
 
-        // Write task JSON into WASM memory
         if let Some(Extern::Memory(memory)) = instance.get_export(&mut store, "memory") {
             let wasm_mem = memory.data_mut(&mut store);
             let start = task_ptr as usize;
@@ -293,9 +276,6 @@ impl WasmAgentRunner {
             );
         }
 
-        // ----------------------------------------------------------------
-        // Call `antikythera_run`
-        // ----------------------------------------------------------------
         let run_fn = match instance.get_typed_func::<(i32, i32), i64>(&mut store, "antikythera_run")
         {
             Ok(f) => f,
@@ -330,9 +310,6 @@ impl WasmAgentRunner {
         let result_ptr = ((packed as u64) >> 32) as usize;
         let result_len = (packed as u32) as usize;
 
-        // ----------------------------------------------------------------
-        // Read the result JSON from WASM memory
-        // ----------------------------------------------------------------
         let result_bytes =
             if let Some(Extern::Memory(memory)) = instance.get_export(&mut store, "memory") {
                 let mem = memory.data(&store);
@@ -352,16 +329,12 @@ impl WasmAgentRunner {
                 );
             };
 
-        // Free the result memory if dealloc is available
         if let Ok(dealloc) =
             instance.get_typed_func::<(i32, i32), ()>(&mut store, "antikythera_dealloc")
         {
             let _ = dealloc.call(&mut store, (result_ptr as i32, result_len as i32));
         }
 
-        // ----------------------------------------------------------------
-        // Deserialise the result
-        // ----------------------------------------------------------------
         let result_str = match std::str::from_utf8(&result_bytes) {
             Ok(s) => s,
             Err(e) => {
@@ -373,26 +346,20 @@ impl WasmAgentRunner {
             }
         };
 
-        // Try to parse as a full TaskResult; fall back to wrapping raw string
         match serde_json::from_str::<TaskResult>(result_str) {
             Ok(r) => r,
-            Err(_) => {
-                // The module returned raw text — wrap it in a successful TaskResult
-                TaskResult::success(
-                    task.task_id,
-                    self.agent_id.clone(),
-                    serde_json::Value::String(result_str.to_string()),
-                    0,
-                    task.session_id.unwrap_or_default(),
-                )
-            }
+            Err(_) => TaskResult::success(
+                task.task_id,
+                self.agent_id.clone(),
+                serde_json::Value::String(result_str.to_string()),
+                0,
+                task.session_id.unwrap_or_default(),
+            ),
         }
     }
 
-    // ----------------------------------------------------------------
-    // Memory helpers
-    // ----------------------------------------------------------------
-
+    /// Reborrow as immutable after get_export's &mut borrow has ended.
+    ///
     fn read_wasm_string(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> Option<String> {
         let memory = caller.get_export("memory").and_then(|e| {
             if let Extern::Memory(m) = e {
@@ -401,7 +368,6 @@ impl WasmAgentRunner {
                 None
             }
         })?;
-        // Reborrow as immutable after get_export's &mut borrow has ended
         let data = memory.data(&*caller);
         let start = ptr as usize;
         let end = start + len as usize;

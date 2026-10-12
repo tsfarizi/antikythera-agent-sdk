@@ -6,7 +6,6 @@
 //!
 //! - [`client`] - The main MCP client for communicating with AI models
 //! - [`agent`] - Autonomous agent that can use tools and execute multi-step tasks
-//! - [`discovery`] - Auto-discovery and loading of MCP servers from a folder
 //! - [`hooks`] - Host authentication, correlation, policy, and telemetry middleware
 //! - [`streaming`] - Token/event streaming primitives and host adapters
 //! - [`tooling`] - Tool server management and MCP server integration

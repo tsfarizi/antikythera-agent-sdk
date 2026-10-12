@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from antikythera_agent.delivery import AgentDeployment
 
 from antikythera_agent.local_loop import LocalLoopConfig, ToolLoopError, run_local_loop
 from antikythera_agent.runtime import WasmRuntime, WasmRuntimeError
@@ -32,6 +35,7 @@ class Agent:
         timeout: int = 60000,
         session_id: Optional[str] = None,
         provider_resolver: Optional[Callable[[Optional[str]], Any]] = None,
+        hooks_provider: Any = None,
     ):
         """Create a new Agent instance.
 
@@ -45,6 +49,13 @@ class Agent:
                 omitted, the runner creates one and it is reused across runs.
             provider_resolver: Optional resolver `(name) -> LlmProvider`;
                 defaults to `server.provider.resolve_provider`.
+            hooks_provider: Instance-owned synchronous runtime hooks. When supplied,
+                the local loop enables those imports in the component configuration.
+
+
+        `AgentConfig` has no session field (frozen types contract); the instance-level session
+        lives here and is refreshed after each successful run so consecutive runs continue the
+        same session.
         """
         if not isinstance(provider, str) or not provider:
             raise ValueError("provider must be a non-empty string")
@@ -64,12 +75,13 @@ class Agent:
             max_steps=max_steps,
             timeout=timeout,
         )
-        # `AgentConfig` has no session field (frozen types contract); the
-        # instance-level session lives here and is refreshed after each
-        # successful run so consecutive runs continue the same session.
         self._session_id = session_id
         self._provider_resolver = provider_resolver
-        self._runtime = WasmRuntime()
+        self._hooks_provider = hooks_provider
+        self._runtime = (
+            WasmRuntime() if hooks_provider is None
+            else WasmRuntime(hooks_provider=hooks_provider)
+        )
         self._pending_tools: List[Tuple[Any, bool]] = []
 
     @classmethod
@@ -121,6 +133,7 @@ class Agent:
             system_prompt=self._config.system_prompt,
             timeout=self._config.timeout,
             prompts=[prompt],
+            runtime_hooks_enabled=self._hooks_provider is not None,
         )
         registry = None
         gate = None
@@ -171,6 +184,12 @@ class Agent:
             max_steps=self._config.max_steps,
             timeout=self._config.timeout,
         )
+
+    def deployment(self, *, agent_id: str) -> AgentDeployment:
+        """Prepare this configured agent for server execution and WASM/jco client delivery."""
+        from antikythera_agent.delivery import AgentDeployment
+
+        return AgentDeployment.from_agent(self, agent_id=agent_id)
 
     def register_tool(self, obj: Any, allow: bool = False) -> None:
         """Daftarkan Tool sugar untuk local loop (BaseTool subclass atau @tool function).

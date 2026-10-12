@@ -42,7 +42,7 @@ where = ["."]
 include = ["antikythera_agent*"]
 
 [tool.setuptools.package-data]
-antikythera_agent = ["*.pyi", "py.typed", "*.wasm", "component/**"]
+antikythera_agent = ["*.pyi", "py.typed", "*.wasm", "component/**", "delivery_assets/**"]
 
 [tool.ruff]
 line-length = 100
@@ -51,12 +51,9 @@ target-version = "py39"
 [tool.ruff.lint]
 select = ["F", "E", "W", "I"]
 
-[tool.ruff.lint.per-file-ignores]
-# Golden wire fixtures are byte-exact and intentionally exceed line length / import order.
-"tests/*" = ["E501", "I001"]
-
 [tool.mypy]
-python_version = "3.9"
+# Mypy 2.x requires a >=3.10 analysis target; runtime remains >=3.9.
+python_version = "3.10"
 ignore_missing_imports = true
 allow_redefinition = true
 check_untyped_defs = true

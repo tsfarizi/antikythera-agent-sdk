@@ -12,9 +12,9 @@
 //! - `PortValidate` — Validate port trait implementations at compile time
 //!
 //! Implementation logic lives in per-derive modules:
-//! [`tool_def`], [`tool_plugin`], [`wasm_bridge`], [`json_schema`],
-//! [`fsm_complete`], [`port_validate`], with shared helpers in
-//! [`type_mapping`] and [`attr_utils`].
+//! `tool_def`, `tool_plugin`, `wasm_bridge`, `json_schema`,
+//! `fsm_complete`, `port_validate`, with shared helpers in
+//! `type_mapping` and `attr_utils`.
 
 mod attr_utils;
 mod fsm_complete;

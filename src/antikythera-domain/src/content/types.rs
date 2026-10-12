@@ -77,6 +77,8 @@ impl ContentItem {
 
     /// Convert to FileContent if this is a resource.
     /// `created_at` must be provided by the caller (injected, not global clock).
+    /// Use provided metadata or create from available info.
+    ///
     pub fn to_file_content(&self, created_at: &str) -> Option<FileContent> {
         if !self.is_resource() {
             return None;
@@ -88,7 +90,6 @@ impl ContentItem {
             .clone()
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        // Use provided metadata or create from available info
         let metadata = self.metadata.clone().unwrap_or_else(|| {
             let filename = self
                 .text

@@ -68,13 +68,13 @@ jobs:
         run: npm install
 
       - name: Build SDK component
-        run: cargo component build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Build toolrunner component
-        run: cargo component build -p antikythera-toolrunner --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo build -p antikythera-toolrunner --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Build default-hooks component
-        run: cargo component build -p antikythera-default-hooks --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo build -p antikythera-default-hooks --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Compose SDK + toolrunner + default-hooks into dist composite
         shell: bash
@@ -92,26 +92,23 @@ jobs:
             -o dist/antikythera-sdk.wasm
 
       - name: Transpile composite WASM component to JS with jco
-        run: |
-          npx --prefix clients jco transpile dist/antikythera-sdk.wasm \
-            --out-dir clients/npm/antikythera-sdk/component \
-            -M "antikythera:agent-sdk/runtime-hooks@1.0.0=./runtime-hooks.js" \
-            -M "wasi:cli/environment@0.2.3=./wasi-stubs/environment.js" \
-            -M "wasi:cli/exit@0.2.3=./wasi-stubs/exit.js" \
-            -M "wasi:cli/stderr@0.2.3=./wasi-stubs/stderr.js" \
-            -M "wasi:cli/stdin@0.2.3=./wasi-stubs/stdin.js" \
-            -M "wasi:cli/stdout@0.2.3=./wasi-stubs/stdout.js" \
-            -M "wasi:clocks/monotonic-clock@0.2.3=./wasi-stubs/monotonic-clock.js" \
-            -M "wasi:clocks/wall-clock@0.2.3=./wasi-stubs/wall-clock.js" \
-            -M "wasi:filesystem/preopens@0.2.3=./wasi-stubs/preopens.js" \
-            -M "wasi:filesystem/types@0.2.3=./wasi-stubs/types.js" \
-            -M "wasi:io/error@0.2.3=./wasi-stubs/error.js" \
-            -M "wasi:io/streams@0.2.3=./wasi-stubs/streams.js" \
-            -M "wasi:random/random@0.2.3=./wasi-stubs/random.js"
+        run: node src/scripts/transpile-client.mjs
 
-      # Must run before staging so the published package ships semantic names.
-      - name: Rename transpiled core modules to semantic names
-        run: node src/scripts/post-transpile-rename.mjs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify component runtime before publishing artifacts
+        run: |
+          pip install "setuptools>=68" wheel
+          pip install -e "clients/python[dev,wasm]"
+          cargo build -p logic-core-host-example -p logic-core-example --release --target wasm32-wasip2 --no-default-features --features component
+          cargo test -p antikythera-tests --test compatibility_tests
+          cargo test -p antikythera-server-runtime
+          cargo build -p antikythera-server-runtime
+          cp target/debug/antikythera-server-runtime target/debug/antikythera-server-runtime.exe
+          node --test --test-concurrency=1 tests/node/*.test.mjs
+          python -m pytest tests/python -q
 
       - name: Stage release artifacts
         shell: bash
@@ -165,13 +162,13 @@ jobs:
           tool: wasm-tools
 
       - name: Build SDK component
-        run: cargo component build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Build toolrunner component
-        run: cargo component build -p antikythera-toolrunner --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo build -p antikythera-toolrunner --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Build default-hooks component
-        run: cargo component build -p antikythera-default-hooks --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo build -p antikythera-default-hooks --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Compose SDK + toolrunner + default-hooks into dist composite
         shell: bash
@@ -216,6 +213,11 @@ jobs:
           name: wasm-component
           path: clients/npm/antikythera-sdk/
 
+      - name: Align Python bundle for the cross-package publication gate
+        run: |
+          cp -r clients/npm/antikythera-sdk/component/. clients/python/antikythera_agent/component/
+          cp clients/npm/antikythera-sdk/antikythera-sdk.wasm clients/python/antikythera_agent/antikythera.wasm
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -223,6 +225,12 @@ jobs:
         run: |
           cargo run -p build-scripts --bin sync-release-version
           echo "npm version set to $(cargo run -p build-scripts --bin sync-release-version -- --print)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install wheel tooling for package gate
+        run: pip install "setuptools>=68" wheel
 
       - name: Publish to npm
         working-directory: clients/npm/antikythera-sdk
@@ -242,20 +250,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download server WASM artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: wasm-server
-          path: clients/python/antikythera_agent/
-
       - name: Download WASM component artifact
         uses: actions/download-artifact@v4
         with:
           name: wasm-component
           path: clients/npm/antikythera-sdk/
 
-      - name: Rename WASM binary
-        run: mv clients/python/antikythera_agent/antikythera_sdk.wasm clients/python/antikythera_agent/antikythera.wasm
+      - name: Embed the verified composite used by the jco client
+        run: cp clients/npm/antikythera-sdk/antikythera-sdk.wasm clients/python/antikythera_agent/antikythera.wasm
 
       - name: Copy jco component bundle into Python package
         shell: bash
@@ -288,7 +290,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-wasm-component, publish-npm, publish-pypi]
+    needs: [build-wasm-component, build-wasm-server, publish-npm, publish-pypi]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -297,6 +299,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wasm-server
+          path: wasm-server
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

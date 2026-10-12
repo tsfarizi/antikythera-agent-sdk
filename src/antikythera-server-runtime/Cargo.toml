@@ -37,3 +37,11 @@ antikythera-provider-openai = { path = "../antikythera-provider-openai" }
 [dev-dependencies]
 tempfile = "3.10"
 serde_urlencoded = "0.7"
+
+[[test]]
+name = "runtime_bridge"
+path = "../../tests/rust/server-runtime/runtime_bridge.rs"
+
+[[test]]
+name = "smoke"
+path = "../../tests/rust/server-runtime/smoke.rs"

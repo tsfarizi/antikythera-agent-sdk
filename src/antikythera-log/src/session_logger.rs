@@ -13,10 +13,6 @@ use crate::entries::LogLevel;
 use crate::logger::Logger;
 use std::sync::{Arc, LazyLock, Mutex};
 
-// ============================================================================
-// Global Logger Registry
-// ============================================================================
-
 /// Global logger storage keyed by session id.
 ///
 /// `antikythera-core` re-exports the [`get_logger`] / [`clear_all_loggers`]
@@ -50,10 +46,6 @@ pub fn logger_count() -> usize {
     let loggers = LOGGERS.lock().unwrap_or_else(|e| e.into_inner());
     loggers.len()
 }
-
-// ============================================================================
-// SessionLogger
-// ============================================================================
 
 /// Typed wrapper around a shared [`Logger`] that tags every entry with the
 /// `"session"` source module.

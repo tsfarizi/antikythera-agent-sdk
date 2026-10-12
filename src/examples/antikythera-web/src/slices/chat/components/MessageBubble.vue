@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * Render message markdown and expandable tool results with role-specific colors.
+ * Tool arguments and results remain structured JSON until the details panel is opened.
+ */
 import { computed, ref } from 'vue'
 import type { Message } from '../core/message'
 import { renderMarkdown } from '@/shared/utils/markdown'
@@ -14,11 +18,13 @@ const renderedContent = computed(() => {
   return renderMarkdown(props.message.content)
 })
 
+/** Format a tool payload as indented JSON, preserving an explicit null display. */
 function formatJson(obj: unknown): string {
   if (obj === null || obj === undefined) return 'null'
   return JSON.stringify(obj, null, 2)
 }
 
+/** Replace underscores in tool identifiers with spaces for the visible label. */
 function toolNameDisplay(tool: string): string {
   return tool.replace(/_/g, ' ')
 }
@@ -26,7 +32,6 @@ function toolNameDisplay(tool: string): string {
 
 <template>
   <div :class="['message', message.role]">
-    <!-- Tool calls (collapsible) -->
     <div v-if="message.toolCalls && message.toolCalls.length > 0" class="tool-calls">
       <button class="tool-toggle" @click="toolsExpanded = !toolsExpanded">
         <span class="tool-icon">⚙</span>
@@ -61,7 +66,6 @@ function toolNameDisplay(tool: string): string {
       </div>
     </div>
 
-    <!-- Message content (rendered as markdown) -->
     <div v-if="message.content" class="bubble markdown-body" v-html="renderedContent" />
   </div>
 </template>
@@ -100,7 +104,6 @@ function toolNameDisplay(tool: string): string {
   border-bottom-left-radius: 4px;
 }
 
-/* Markdown body styles */
 .markdown-body :deep(p) {
   margin: 0 0 8px 0;
 }
@@ -187,7 +190,6 @@ function toolNameDisplay(tool: string): string {
   font-weight: 600;
 }
 
-/* User bubble markdown overrides (white text) */
 .message.user .markdown-body :deep(code) {
   background: rgba(255, 255, 255, 0.2);
   color: white;
@@ -202,7 +204,6 @@ function toolNameDisplay(tool: string): string {
   color: rgba(255, 255, 255, 0.8);
 }
 
-/* Tool calls collapsible */
 .tool-calls {
   max-width: 70%;
   margin-bottom: 6px;

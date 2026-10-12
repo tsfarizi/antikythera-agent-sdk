@@ -382,10 +382,6 @@ impl SecurityLogger {
     }
 }
 
-// ============================================================================
-// AppLogger Port Implementations
-// ============================================================================
-
 macro_rules! impl_app_logger {
     ($ty:ty) => {
         impl crate::application::ports::logging::AppLogger for $ty {
@@ -421,7 +417,7 @@ impl_app_logger!(SecurityLogger);
 use super::registry::SessionLogger;
 
 /// Newtype adapter wrapping [`antikythera_log::SessionLogger`] to implement
-/// the [`AppLogger`] port trait. Required because both the trait (from
+/// the [`crate::application::ports::logging::AppLogger`] port trait. Required because both the trait (from
 /// `antikythera_ports`) and the wrapped type (from `antikythera_log`) are
 /// external to this crate, so the orphan rule prevents a direct impl.
 pub struct SessionLoggerAdapter(pub SessionLogger);

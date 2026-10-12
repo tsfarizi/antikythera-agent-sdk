@@ -1,30 +1,9 @@
-"""LLM provider proxy layer (unit U14): provider abstraction, stub, ollama.
+"""Wire-compatible LLM providers: stub, Ollama, and OpenAI-compatible HTTP.
 
-Providers accept a wire `llm-request` (golden `llm_call_request`, built by
-`wire.build_llm_request`) and MUST return a wire `llm-response` (golden
-`llm_call_response`) with exactly the seven golden keys — no extra fields,
-no missing fields (WIRE_PROTOCOL §7).
-
-Implementations (decision D-2 default: stub + ollama minimal):
-- `StubProvider`: configured static response (JSON string) for tests/parity.
-- `OllamaProvider`: minimal HTTP proxy to Ollama (`POST {base_url}/api/chat`)
-  using only stdlib `urllib.request` (decision D3/A-3: zero-dependency base);
-  the transport is injectable for tests.
-
-`provider_registry` + `resolve_provider` give downstream units (U21 control,
-U23 loop owner) a single lookup point. Default provider: `stub`.
-
-Error contract:
-- `ValueError` — invalid wire input (non-object request, undecodable
-  `messages_json`, invalid stub configuration).
-- `LlmError` — LLM/provider failure (transport/network, invalid provider
-  response, missing model). Raw HTTP exceptions are never surfaced as-is.
-
-Streaming is NOT a provider concern (WIRE_PROTOCOL §2.1): the only stream
-signal is the transport-level query param `?stream=true` (unit U31), and
-`metadata_json` is never read as a stream signal. `metadata_json` is not
-forwarded to Ollama because the `/api/chat` API has no metadata field; when
-it is forwarded (future providers), it must remain verbatim.
+Streaming providers emit incremental UTF-8 content and return the complete
+seven-field wire response only after a completion marker. HTTP/network and
+malformed provider responses raise LlmError. The HTTP bridge selects streaming
+using ?stream=true; metadata_json is never used as a stream flag.
 """
 
 from __future__ import annotations
@@ -58,6 +37,13 @@ class LlmProvider(ABC):
             raise ValueError("llm provider request must be an object")
         return self._call(request)
 
+    def call_stream(
+        self, request: Dict[str, Any], on_token: Callable[[str], None]
+    ) -> Dict[str, Any]:
+        response = self.call(request)
+        on_token(response["content"])
+        return response
+
     @abstractmethod
     def _call(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Provider-specific request handling."""
@@ -76,9 +62,13 @@ class StubProvider(LlmProvider):
         self.response_json = response_json
 
     def _call(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        # Mirror `StubLlmProvider::call` (parity U61): `content` is the whole
-        # configured string verbatim — never the value of a `content` field in
-        # the configured JSON; model/session_id come from the request.
+        """Mirror `StubLlmProvider::call` (parity U61): `content` is the whole configured string
+        verbatim — never the value of a `content` field in the configured JSON;
+        model/session_id come from the request.
+
+        Final normalization through the golden parser guarantees the seven-key invariant (no
+        extra fields) while preserving the content.
+        """
         parsed = {
             "content": self.response_json,
             "model": request.get("model"),
@@ -88,8 +78,6 @@ class StubProvider(LlmProvider):
             "finish_reason": "stop",
             "raw_response_json": None,
         }
-        # Final normalization through the golden parser guarantees the
-        # seven-key invariant (no extra fields) while preserving the content.
         return wire.parse_llm_response(parsed)
 
 
@@ -122,15 +110,53 @@ class OllamaProvider(LlmProvider):
         self._transport = transport or _urlopen_json_transport
 
     def _call(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Every failure at the HTTP boundary is a domain error; raw URLError/HTTPError must
+        never reach the caller.
+        """
         url = self.base_url + "/api/chat"
         body = self._build_ollama_body(request)
         try:
             raw_response = self._transport(url, body, self.timeout)
         except Exception as exc:
-            # Every failure at the HTTP boundary is a domain error; raw
-            # URLError/HTTPError must never reach the caller.
             raise LlmError(f"ollama request to {url} failed: {exc}") from exc
         return self._parse_ollama_response(raw_response, request)
+
+    def call_stream(
+        self, request: Dict[str, Any], on_token: Callable[[str], None]
+    ) -> Dict[str, Any]:
+        if self._transport is not _urlopen_json_transport:
+            return super().call_stream(request, on_token)
+        body = self._build_ollama_body(request)
+        body["stream"] = True
+        req = urllib.request.Request(
+            self.base_url + "/api/chat",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        full = ""
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                for line in response:
+                    if len(line) > 8 * 1024 * 1024:
+                        raise LlmError("stream record exceeds 8 MiB")
+                    if not line.strip():
+                        continue
+                    value = json.loads(line.decode("utf-8"))
+                    if value.get("error"):
+                        raise LlmError(str(value["error"]))
+                    delta = (value.get("message") or {}).get("content", "")
+                    full += delta
+                    if delta:
+                        on_token(delta)
+                    if value.get("done") is True:
+                        value["message"] = {"role": "assistant", "content": full}
+                        return self._parse_ollama_response(value, request)
+            raise LlmError("stream ended without completion marker")
+        except LlmError:
+            raise
+        except Exception as exc:
+            raise LlmError(f"ollama stream failed: {exc}") from exc
 
     def _build_ollama_body(self, request: Dict[str, Any]) -> Dict[str, Any]:
         raw_messages = request.get("messages_json") or "[]"
@@ -142,9 +168,7 @@ class OllamaProvider(LlmProvider):
             raise ValueError("llm-request messages_json must decode to a JSON array")
         model = request.get("model") or self.model
         if not model:
-            raise LlmError(
-                "ollama provider requires a model (request.model or provider model)"
-            )
+            raise LlmError("ollama provider requires a model (request.model or provider model)")
         body = {"model": model, "messages": messages, "stream": False}
         if request.get("force_json") is True:
             body["format"] = "json"
@@ -160,6 +184,9 @@ class OllamaProvider(LlmProvider):
         return body
 
     def _parse_ollama_response(self, raw: Any, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Final normalization through the golden parser guarantees the seven-key invariant even
+        if a future field mapping drifts.
+        """
         if not isinstance(raw, dict):
             raise LlmError(f"ollama response is not a JSON object: {type(raw).__name__}")
         message = raw.get("message")
@@ -186,9 +213,101 @@ class OllamaProvider(LlmProvider):
             "finish_reason": finish_reason,
             "raw_response_json": json.dumps(raw),
         }
-        # Final normalization through the golden parser guarantees the
-        # seven-key invariant even if a future field mapping drifts.
         return wire.parse_llm_response(parsed)
+
+
+class OpenAiProvider(LlmProvider):
+    """OpenAI-compatible chat completions using the same wire response as Rust."""
+
+    def __init__(self, endpoint: str, api_key: str, model: str, timeout: float = 60.0):
+        self.endpoint, self.api_key, self.model, self.timeout = (
+            endpoint.rstrip("/"),
+            api_key,
+            model,
+            timeout,
+        )
+
+    def _request(self, request: Dict[str, Any], stream: bool) -> Any:
+        body = {
+            "model": request.get("model") or self.model,
+            "messages": json.loads(request.get("messages_json") or "[]"),
+            "stream": stream,
+        }
+        if request.get("force_json"):
+            body["response_format"] = {"type": "json_object"}
+        for name in ("temperature", "max_tokens"):
+            if request.get(name) is not None:
+                body[name] = request[name]
+        return urllib.request.Request(
+            self.endpoint + "/chat/completions",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + self.api_key},
+            method="POST",
+        )
+
+    def _response(
+        self, request: Dict[str, Any], content: str, raw: Any = None, finish: str = "stop"
+    ) -> Dict[str, Any]:
+        return wire.parse_llm_response(
+            {
+                "content": content,
+                "model": request.get("model") or self.model,
+                "session_id": request.get("session_id"),
+                "message_json": None,
+                "tokens_used": (raw or {}).get("usage", {}).get("total_tokens"),
+                "finish_reason": finish,
+                "raw_response_json": json.dumps(raw) if raw else None,
+            }
+        )
+
+    def _call(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            with urllib.request.urlopen(
+                self._request(request, False), timeout=self.timeout
+            ) as response:
+                value = json.load(response)
+            choice = value["choices"][0]
+            return self._response(
+                request,
+                choice["message"].get("content") or "",
+                value,
+                choice.get("finish_reason") or "stop",
+            )
+        except Exception as exc:
+            raise LlmError(f"openai call failed: {exc}") from exc
+
+    def call_stream(
+        self, request: Dict[str, Any], on_token: Callable[[str], None]
+    ) -> Dict[str, Any]:
+        full, finish = "", "stop"
+        try:
+            with urllib.request.urlopen(
+                self._request(request, True), timeout=self.timeout
+            ) as response:
+                for line in response:
+                    if len(line) > 8 * 1024 * 1024:
+                        raise LlmError("stream record exceeds 8 MiB")
+                    if not line.startswith(b"data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == b"[DONE]":
+                        return self._response(request, full, finish=finish)
+                    value = json.loads(data.decode("utf-8"))
+                    if value.get("error"):
+                        raise LlmError(str(value["error"]))
+                    if not value.get("choices"):
+                        continue
+                    choice = value["choices"][0]
+                    delta = choice.get("delta", {}).get("content") or ""
+                    full += delta
+                    if delta:
+                        on_token(delta)
+                    finish = choice.get("finish_reason") or finish
+            raise LlmError("stream ended without completion marker")
+        except LlmError:
+            raise
+        except Exception as exc:
+            raise LlmError(f"openai stream failed: {exc}") from exc
 
 
 provider_registry: Dict[str, LlmProvider] = {

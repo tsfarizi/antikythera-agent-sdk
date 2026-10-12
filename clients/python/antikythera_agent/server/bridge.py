@@ -24,8 +24,8 @@ Komposisi:
   (registry/gate/control/component/transport/provider resolver), dan
   mengembalikan `AgentServer` ter-wire.
 - `AgentServer` memaparkan lifecycle (`start`/`stop`/`url`), registrasi tool
-  (`register_server_tool`/`register_client_tools`), hook MCP (ditolak —
-  transport MCP belum ada), dan loop core@server (`run_server_loop`).
+  (`register_server_tool`/`register_client_tools`), MCP tools via stdio atau
+  Streamable HTTP, dan loop core@server (`run_server_loop`).
 
 Amplop runtime:
 - Base install zero-dependency (D6): wasmtime TIDAK di-import oleh modul ini;
@@ -51,7 +51,7 @@ from .component import ComponentServer
 from .control import ControlChannel
 from .gate import PolicyGate
 from .loop_owner import LoopOutcome, ToolLoopConfig, run_tool_loop
-from .provider import LlmProvider, OllamaProvider, StubProvider, provider_registry
+from .provider import LlmProvider, OllamaProvider, OpenAiProvider, StubProvider, provider_registry
 from .registry import UnionRegistry
 from .transport import DEFAULT_CLIENT_ID, ThreadingHttpTransport
 
@@ -86,6 +86,8 @@ class AgentServerOptions:
     - `keepalive_secs` — interval keepalive SSE control channel.
     """
 
+    auth_token: Optional[str] = None
+    allowed_origins: Optional[List[str]] = None
     bind: str = "127.0.0.1"
     port: int = 0
     component_dir: Optional[Path] = None
@@ -101,16 +103,27 @@ class AgentServerOptions:
 
 
 def _validate_options(options: AgentServerOptions) -> None:
-    """Entry-point guard: invarian struktur sebelum komposisi dependensi."""
+    """Entry-point guard: invarian struktur sebelum komposisi dependensi.
+
+
+    Kolon sah hanya sebagai literal IPv6; port bukan urusan bind (misuse `"127.0.0.1:8787"` =
+    port di bind → program error eksplisit).
+    """
     if not isinstance(options.bind, str) or not options.bind.strip():
         raise ValueError("AgentServerOptions.bind must be a non-empty host string")
     if any(ch.isspace() for ch in options.bind):
-        raise ValueError(
-            f"AgentServerOptions.bind must not contain whitespace: {options.bind!r}"
-        )
+        raise ValueError(f"AgentServerOptions.bind must not contain whitespace: {options.bind!r}")
+    if options.auth_token is not None and (
+        not isinstance(options.auth_token, str) or not options.auth_token.strip()
+    ):
+        raise ValueError("auth_token must be a non-empty string")
+    try:
+        loopback = ipaddress.ip_address(options.bind).is_loopback
+    except ValueError:
+        loopback = options.bind == "localhost"
+    if not loopback and not options.auth_token:
+        raise ValueError("non-loopback bind requires auth_token")
     if ":" in options.bind:
-        # Kolon sah hanya sebagai literal IPv6; port bukan urusan bind
-        # (misuse `"127.0.0.1:8787"` = port di bind → program error eksplisit).
         try:
             ipaddress.IPv6Address(options.bind)
         except ValueError:
@@ -184,6 +197,13 @@ def _coerce_provider(name: str, spec: Any) -> LlmProvider:
                     "'response' JSON string"
                 )
             return StubProvider(response)
+        if kind in ("openai", "open-ai"):
+            return OpenAiProvider(
+                endpoint=spec.get("endpoint", "https://api.openai.com/v1"),
+                api_key=spec.get("api_key", ""),
+                model=spec.get("model", ""),
+                timeout=spec.get("timeout", 60.0),
+            )
         if kind == "ollama":
             base_url = spec.get("base_url", "http://127.0.0.1:11434")
             model = spec.get("model")
@@ -200,7 +220,7 @@ def _coerce_provider(name: str, spec: Any) -> LlmProvider:
             return OllamaProvider(base_url=base_url, model=model)
         raise ValueError(
             f"AgentServerOptions.providers[{name!r}]: unknown provider spec type "
-            f"{kind!r}; expected 'stub' or 'ollama'"
+            f"{kind!r}; expected 'stub', 'ollama', or 'openai'"
         )
     raise TypeError(
         f"AgentServerOptions.providers[{name!r}] must be an LlmProvider or a spec "
@@ -222,9 +242,7 @@ def _build_provider_resolver(
         try:
             return providers[key]
         except KeyError:
-            raise KeyError(
-                f"unknown LLM provider: {key!r}; known: {sorted(providers)}"
-            ) from None
+            raise KeyError(f"unknown LLM provider: {key!r}; known: {sorted(providers)}") from None
 
     return resolve
 
@@ -276,6 +294,8 @@ def createAgentServer(
         component=component,
         provider_resolver=provider_resolver,
         client_id=client_id,
+        auth_token=options.auth_token,
+        allowed_origins=options.allowed_origins,
     )
     return AgentServer(
         options=options,
@@ -315,6 +335,7 @@ class AgentServer:
         self._gate = gate
         self._control = control
         self._component = component
+        self._mcp_clients: list[Any] = []
         self._transport = transport
         self._provider_resolver = provider_resolver
         self._client_id = client_id
@@ -323,7 +344,6 @@ class AgentServer:
             Path(options.wasm_path).resolve() if options.wasm_path is not None else None
         )
 
-    # -- properti ---------------------------------------------------------
 
     @property
     def registry(self) -> UnionRegistry:
@@ -350,7 +370,6 @@ class AgentServer:
         """URL HTTP aktif, atau None sebelum `start()` (aksesor state mentah)."""
         return self._server_url
 
-    # -- lifecycle --------------------------------------------------------
 
     @staticmethod
     def _format_url(bind: str, port: int) -> str:
@@ -379,6 +398,9 @@ class AgentServer:
         `start()` dapat dipanggil lagi (HTTP restart; keepalive control
         tidak restartable — SSE hidup tanpa keepalive setelah restart).
         """
+        for client in self._mcp_clients:
+            client.close()
+        self._mcp_clients.clear()
         self._transport.stop()
         self._control.close()
         self._server_url = None
@@ -389,7 +411,6 @@ class AgentServer:
             raise RuntimeError("AgentServer is not started; call start() first")
         return self._server_url
 
-    # -- registrasi tool --------------------------------------------------
 
     def register_server_tool(
         self,
@@ -406,12 +427,8 @@ class AgentServer:
 
     def register_client_tools(self, definitions: List[Dict[str, Any]]) -> None:
         """Daftarkan definisi tool yang dieksekusi peer client (owner `client`)."""
-        if not isinstance(definitions, list) or not all(
-            isinstance(d, dict) for d in definitions
-        ):
-            raise TypeError(
-                "register_client_tools definitions must be a list of dicts"
-            )
+        if not isinstance(definitions, list) or not all(isinstance(d, dict) for d in definitions):
+            raise TypeError("register_client_tools definitions must be a list of dicts")
         for definition in definitions:
             self._registry.register_client(definition)
 
@@ -455,18 +472,36 @@ class AgentServer:
             self.register_tool(obj, allow=allow)
 
     def connect_mcp_server(self, config: Any) -> None:
-        """Sambungkan MCP server (destination `mcp`, selalu server-side, K2).
+        """Register MCP tools while preserving the separate mcp permission allowlist.
 
-        Transport MCP BELUM ada di paket Python — unit ini sengaja TIDAK
-        mengimplementasikannya; kontrak eksplisit untuk unit transport MCP
-        mendatang. Mencoba memanggil = NotImplementedError.
+
+        Validates ownership collisions before mutating the registry.
         """
-        raise NotImplementedError(
-            "MCP transport is not implemented in the Python server runtime; "
-            "connect_mcp_server is reserved for a future MCP transport unit"
-        )
+        from .mcp import McpClient
 
-    # -- loop core@server -------------------------------------------------
+        client = McpClient(config)
+        try:
+            tools = client.tools()
+            for tool in tools:
+                owner = self._registry.owner_of(tool["name"])
+                if owner is not None:
+                    raise ValueError(f"tool registry: name collision for tool '{tool['name']}'")
+            for tool in tools:
+                name = tool["name"]
+                self._registry.register_mcp(
+                    {
+                        "name": name,
+                        "description": tool.get("description") or name,
+                        "input_schema": tool.get("inputSchema"),
+                        "output_schema": tool.get("outputSchema"),
+                    },
+                    lambda arguments, tool_name=name: client.call_tool(tool_name, arguments),
+                )
+            self._mcp_clients.append(client)
+        except Exception:
+            client.close()
+            raise
+
 
     def run_server_loop(self, config: ToolLoopConfig) -> LoopOutcome:
         """Jalankan tool loop di komposit (mode core@server, K1).
@@ -476,11 +511,17 @@ class AgentServer:
         `run_tool_loop` dari loop_owner.py dengan `WasmRuntime` fresh per
         run; `runtime_hooks_enabled`/`client_id`/`pending_ttl_secs` server
         diteruskan ke config loop (identitas peer + TTL adalah milik server).
+
+
+        Import lokal: wasmtime hanya disentuh saat mode core@server diaktifkan (D6); base
+        install tetap zero-dependency.
+
+        Seam runtime.py: _ensure_initialized membaca self._wasm_path secara lazy — override
+        instance sebelum panggilan runner pertama.
         """
         if not isinstance(config, ToolLoopConfig):
             raise TypeError(
-                f"run_server_loop config must be a ToolLoopConfig, "
-                f"got {type(config).__name__}"
+                f"run_server_loop config must be a ToolLoopConfig, got {type(config).__name__}"
             )
         if self._wasm_path is None:
             raise RuntimeError(
@@ -488,13 +529,9 @@ class AgentServer:
                 "is not set; pass the composite WASM path and install wasmtime "
                 "(pip install antikythera-agent[wasm])"
             )
-        # Import lokal: wasmtime hanya disentuh saat mode core@server
-        # diaktifkan (D6); base install tetap zero-dependency.
         from antikythera_agent.runtime import WasmRuntime
 
         runtime = WasmRuntime()
-        # Seam runtime.py: _ensure_initialized membaca self._wasm_path secara
-        # lazy — override instance sebelum panggilan runner pertama.
         runtime._wasm_path = self._wasm_path
         effective = replace(
             config,

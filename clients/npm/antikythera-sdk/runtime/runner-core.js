@@ -14,13 +14,13 @@ const {
 } = require('./types.js');
 const { createTransport } = require('./transport.js');
 const { createSseChannel } = require('./sse.js');
-const { createControlHandler, acquireRuntimeHooksProvider, releaseRuntimeHooksProvider } = require('./control.js');
+const { createControlHandler } = require('./control.js');
 const { createPolicyGate } = require('./policy.js');
 const { createUnionRegistry } = require('./registry.js');
 const { isTool, extractToolEntry } = require('./tools.js');
 
 /**
- * Client core (K1): the WASM runner lives in this module instance. The host
+ * Client core: each runtime owns a WASM instance created by the jco factory. The host
  * runtime owns the tool loop — init, prepare, LLM via the server proxy,
  * commit, drain, route, process — and `auto_execute_tools=false` keeps the
  * runner from executing tools itself.
@@ -61,14 +61,14 @@ function componentEntryUrl(componentBase, entry) {
  * consumer opted into `componentBase`; any failure here is an explicit error,
  * never a silent fallback (fallback applies only to the no-option default).
  */
-async function fetchComponentManifest(serverUrl) {
+async function fetchComponentManifest(serverUrl, options = {}) {
   if (typeof serverUrl !== 'string' || !serverUrl) {
     throw new Error('loadRunnerModule: componentBase requires serverUrl to resolve the manifest');
   }
   const url = joinUrl(serverUrl, WIRE.COMPONENT_MANIFEST);
   let response;
   try {
-    response = await fetch(url);
+    response = await fetch(url, {headers: options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {}, signal: AbortSignal.timeout(options.timeoutMs ?? 60000) });
   } catch (err) {
     throw new Error(
       `loadRunnerModule: fetch component manifest ${WIRE.COMPONENT_MANIFEST} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -135,25 +135,36 @@ async function loadRunnerModule(options = {}) {
     if (typeof options.componentBase !== 'string' || !options.componentBase) {
       throw new Error('loadRunnerModule: componentBase must be a non-empty absolute URL string');
     }
-    const manifest = await fetchComponentManifest(options.serverUrl);
+    const manifest = await fetchComponentManifest(options.serverUrl, options);
     return loadRemoteRunner(options.componentBase, manifest.entry);
   }
   return loadBundledRunner();
 }
 
 /**
- * Streaming commit is deterministic, not racy: the server queues every token
- * on the SSE control channel BEFORE it resolves the POST /llm/call?stream=true
- * response, so the response itself is the stream-completion signal. The token
- * pump drains asynchronously, so we wait for the channel to settle (no new
- * token for SETTLE_MS) before committing the stream; a stream that never
- * produces a token within DRAIN_TIMEOUT_MS falls back explicitly to the
- * response body (never silently to the non-streaming path mid-stream).
+ * Normalize tool classes, decorated handlers, and explicit definition/handler entries
+ * into the local registry representation.
+ * @param {Array<object>} [tools] - Tool entries supplied by the application.
+ * @returns {Array<object>} Validated definition/handler entries.
  */
-const STREAM_SETTLE_MS = 100;
-const STREAM_DRAIN_TIMEOUT_MS = 250;
+function normalizeLocalToolsWithSugar(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return normalizeLocalTools(tools);
+  const mapped = tools.map((entry) => {
+    if (isTool(entry)) {
+      const extracted = extractToolEntry(entry);
+      return extracted ? { definition: extracted.definition, handler: extracted.handler } : entry;
+    }
+    return entry;
+  });
+  return normalizeLocalTools(mapped);
+}
 
 /**
+ * Create a host tool loop with a private WASM Component Model instance.
+ *
+ * Hooks, sessions, cancellation, and tool registries belong to the returned runtime.
+ * Remote components load their instantiate.js factory after validating the manifest.
+ * An injected runner bypasses factory creation and retains its caller-defined ownership.
  * @param {object} options
  * @param {string} options.serverUrl
  * @param {Array<{definition: object, handler: Function}>} [options.tools]
@@ -173,54 +184,52 @@ const STREAM_DRAIN_TIMEOUT_MS = 250;
  *   (WIRE_PROTOCOL §2.6, decision D5). Omit to keep the bundled component.
  * @param {object} [options.runner] - directly injected runner namespace;
  *   bypasses the component import entirely (decision D5).
- * @returns {Promise<object>}
+ * @returns {Promise<object>} Runtime lifecycle, turn, event, and registry operations.
  */
-function normalizeLocalToolsWithSugar(tools) {
-  if (!Array.isArray(tools) || tools.length === 0) return normalizeLocalTools(tools);
-  const mapped = tools.map((entry) => {
-    if (isTool(entry)) {
-      const extracted = extractToolEntry(entry);
-      return extracted ? { definition: extracted.definition, handler: extracted.handler } : entry;
-    }
-    return entry;
-  });
-  return normalizeLocalTools(mapped);
-}
-
 async function createClientCoreRuntime(options) {
   if (typeof options.serverUrl !== 'string' || !options.serverUrl) {
     throw new Error('createAgentRuntime: serverUrl is required');
   }
-  const transport = createTransport({ serverUrl: options.serverUrl });
   const clientId = options.clientId ?? randomId('client');
+  const transport = createTransport({ serverUrl: options.serverUrl, authToken: options.authToken, timeoutMs: options.timeoutMs, clientId });
   const localEntries = normalizeLocalToolsWithSugar(options.tools);
   const gate = createPolicyGate(options.policy);
   const maxSteps = options.maxSteps ?? 10;
+  if (!Number.isInteger(maxSteps) || maxSteps < 0) throw new Error('maxSteps must be a non-negative integer');
   const continuationPrompt = options.continuationPrompt ?? '[continue]';
 
-  // Hooks provider ownership (R3): the token is held for the runtime's whole
-  // lifetime so a coexisting runtime's provider survives this one's teardown.
-  const hooksOwnerToken = acquireRuntimeHooksProvider(options.hooks ?? null);
-  const runner = await loadRunnerModule({
-    serverUrl: options.serverUrl,
-    componentBase: options.componentBase,
-    runner: options.runner,
-  });
+  let runner;
+  if (options.runner != null) {
+    runner = assertRunnerNamespace(options.runner, 'injected');
+  } else {
+    let entry = '../component/instantiate.js';
+    if (options.componentBase != null) {
+      await fetchComponentManifest(options.serverUrl, options);
+      entry = componentEntryUrl(options.componentBase, 'instantiate.js');
+    }
+    try {
+      runner = assertRunnerNamespace(await (await import(entry)).createRunner(options.hooks), 'component');
+    } catch (err) {
+      throw new Error(`loadRunnerModule: import component bundle '${entry}' failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   const listeners = new Set();
   let sessionId = options.sessionId ?? null;
   let connected = false;
   let channel = null;
   let registry = null;
-  let pendingChunkCount = 0;
   let turnSeq = 0;
+  let activeTurn = null;
+  let resetPending = false;
+  let closed = false;
 
+  /** Deliver a runtime event to every subscriber while isolating subscriber failures. */
   function emitEvent(event) {
     for (const listener of [...listeners]) {
       try {
         listener(event);
       } catch {
-        // a UI listener must not break the runtime loop
       }
     }
   }
@@ -231,6 +240,11 @@ async function createClientCoreRuntime(options) {
     }
   }
 
+  /**
+   * Forward SSE tokens for presentation without committing them to WASM state.
+   * The complete HTTP response remains authoritative when frames are late,
+   * duplicated, or lost. Tokens for other sessions retain their original identity.
+   */
   function onLlmToken(payload) {
     const chunk = payload.chunk;
     if (typeof chunk !== 'string') return;
@@ -238,51 +252,13 @@ async function createClientCoreRuntime(options) {
       emitEvent({ type: 'llm-token', sessionId: payload.session_id, chunk, correlationId: payload.correlation_id ?? null });
       return;
     }
-    pendingChunkCount += 1;
-    runner.appendLlmChunk(sessionId, chunk, payload.correlation_id ?? null);
     emitEvent({ type: 'llm-token', sessionId, chunk, correlationId: payload.correlation_id ?? null });
   }
 
-  /**
-   * Wait until the llm-token stream has settled after the POST /llm/call
-   * response resolved. The response is the completion signal; this only
-   * absorbs the server's asynchronous token pump. Bounded: never waits longer
-   * than STREAM_DRAIN_TIMEOUT_MS.
-   */
-  async function waitForStreamSettle() {
-    const deadline = Date.now() + STREAM_DRAIN_TIMEOUT_MS;
-    let quietSince = Date.now();
-    for (;;) {
-      const now = Date.now();
-      if (now - quietSince >= STREAM_SETTLE_MS) return;
-      if (now >= deadline) return;
-      if (pendingChunkCount > 0) quietSince = now;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-
-  /**
-   * Deterministic stream commit: drain all llm-token events until the stream
-   * settles, then commit the streamed chunks. If the stream never produced a
-   * token within the bounded drain window, fall back to the llm-response body
-   * with an explicit `stream-fallback` event (a dead stream must not silently
-   * take the non-streaming path, and must not hang either).
-   * @param {string} preparedJson
-   * @param {object} llmResponse - parsed llm-response wire body
-   * @returns {Promise<object>} parsed runner commit envelope
-   */
+  /** Commit the complete HTTP response once, then publish the resulting runner action. */
   async function commitStreamedTurn(preparedJson, llmResponse) {
-    await waitForStreamSettle();
-    if (pendingChunkCount > 0) {
-      return JSON.parse(runner.commitLlmStream(preparedJson));
-    }
-    emitEvent({
-      type: 'stream-fallback',
-      reason: 'no llm-token events observed before the stream settle window; committing the llm-response body',
-      content: llmResponse.content ?? null,
-    });
-    const payload = llmResponse.message_json ?? llmResponse.content ?? '';
-    return JSON.parse(runner.commitLlmResponse(preparedJson, payload));
+    emitEvent({ type: 'stream-complete', source: 'http', content: llmResponse.content });
+    return JSON.parse(runner.commitLlmResponse(preparedJson, llmResponse.content ?? ''));
   }
 
   async function refreshRegistry(serverDefinitions) {
@@ -326,7 +302,13 @@ async function createClientCoreRuntime(options) {
     return joinUrl(options.serverUrl, `${WIRE.EVENTS}?${query}${sessionQuery}`);
   }
 
+  let connectionPromise = null;
   async function connect() {
+    if (!connectionPromise) connectionPromise = connectOnce().finally(() => { connectionPromise = null; });
+    return connectionPromise;
+  }
+  async function connectOnce() {
+    if (closed) throw new Error('runtime is closed');
     if (connected) return;
     const config = {
       session_id: options.sessionId ?? undefined,
@@ -340,16 +322,26 @@ async function createClientCoreRuntime(options) {
     sessionId = runner.init(JSON.stringify(config));
     emitEvent({ type: 'session', sessionId });
     await refreshRegistry();
-    channel = createSseChannel({
+    if (closed) throw new Error('runtime is closed');
+    const connectingChannel = createSseChannel({
       url: eventsUrl(),
+      timeoutMs: options.timeoutMs,
+      headers: options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {},
       onEvent: (envelope) => control.handle(envelope),
       onStatus: (status) => emitEvent({ type: 'status', ...status }),
     });
-    channel.start();
+    channel = connectingChannel;
+    connectingChannel.start();
+    try { await connectingChannel.ready(); } catch (error) {
+      connectingChannel.stop();
+      if (channel === connectingChannel) channel = null;
+      throw error;
+    }
+    if (closed) throw new Error('runtime is closed');
     connected = true;
   }
 
-  async function routeTool(toolName, args, stepId, correlationId) {
+  async function routeTool(toolName, args, stepId, correlationId, signal) {
     const owner = registry ? registry.ownerOf(toolName) : undefined;
     if (owner === WIRE.OWNER_CLIENT) {
       const result = await runLocalTool(toolName, args);
@@ -368,7 +360,7 @@ async function createClientCoreRuntime(options) {
         sessionId,
         stepId,
       });
-      const wireResult = parseToolExecutionResult(await transport.executeServerTool(wireCall));
+      const wireResult = parseToolExecutionResult(await transport.executeServerTool(wireCall, { signal }));
       return wireToRunnerToolResult(wireResult, correlationId);
     }
     throw new Error(`permission: tool '${toolName}' has no owner in the union registry`);
@@ -401,22 +393,27 @@ async function createClientCoreRuntime(options) {
    * @param {string} [opts.continuationPrompt]
    * @returns {Promise<{sessionId: string, action: 'final', content: string|null, events: Array<object>, iterations: number}>}
    */
-  async function runTurn(prompt, opts = {}) {
+  async function performTurn(prompt, opts = {}) {
     requireConnected();
     const systemPrompt = opts.systemPrompt ?? options.systemPrompt ?? '';
     const turnCorrelationId = opts.correlationId ?? `turn-${++turnSeq}`;
     const continuation = opts.continuationPrompt ?? continuationPrompt;
-    const maxIterations = maxSteps + 1;
+    const requestedSteps = opts.maxSteps ?? maxSteps;
+    if (!Number.isInteger(requestedSteps) || requestedSteps < 0) {
+      throw new Error('maxSteps must be a non-negative integer');
+    }
+    const maxIterations = Math.min(maxSteps, requestedSteps);
     const allEvents = [];
     let iteration = 0;
     let first = true;
 
     while (true) {
-      iteration += 1;
-      if (iteration > maxIterations) {
+      opts.signal?.throwIfAborted();
+      if (iteration >= maxIterations) {
         throw new Error(`permission: turn exceeded max_steps (${maxSteps}) iterations`);
       }
 
+      iteration += 1;
       const correlationId = `${turnCorrelationId}-${iteration}`;
       const preparedJson = runner.prepareUserTurn(
         JSON.stringify({
@@ -430,7 +427,6 @@ async function createClientCoreRuntime(options) {
       );
       const prepared = JSON.parse(preparedJson);
 
-      pendingChunkCount = 0;
       const streamRequested = options.llm?.stream !== false;
       const llmRequest = buildLlmRequest({
         provider: options.llm?.provider ?? null,
@@ -443,15 +439,17 @@ async function createClientCoreRuntime(options) {
         schemaName: options.llm?.schemaName ?? null,
         metadataJson: opts.metadataJson ?? options.llm?.metadataJson ?? null,
       });
+      if (activeTurn) activeTurn.steps = iteration;
       const llmResponse = parseLlmResponse(
-        await transport.llmCall(llmRequest, { stream: streamRequested }),
+        await transport.llmCall(llmRequest, { stream: streamRequested, signal: opts.signal }),
       );
 
+      opts.signal?.throwIfAborted();
       let commit;
       if (streamRequested) {
         commit = await commitStreamedTurn(preparedJson, llmResponse);
       } else {
-        const payload = llmResponse.message_json ?? llmResponse.content ?? '';
+        const payload = llmResponse.content ?? '';
         commit = JSON.parse(runner.commitLlmResponse(preparedJson, payload));
       }
 
@@ -474,10 +472,13 @@ async function createClientCoreRuntime(options) {
 
       if (commit.action === 'call_tool') {
         const toolName = commit.tool_name;
+        if (drained.some(event => event.kind === 'tool_result' && event.payload?.tool === toolName)) { first = false; continue; }
         const input = commit.tool_input ?? {};
+        opts.signal?.throwIfAborted();
         emitEvent({ type: 'tool_requested', sessionId, tool: toolName, input, step: commit.step ?? 0 });
-        const toolResultInput = await routeTool(toolName, input, commit.step ?? 0, correlationId);
+        const toolResultInput = await routeTool(toolName, input, commit.step ?? 0, correlationId, opts.signal);
         emitEvent({ type: 'tool_result', sessionId, tool: toolName, success: toolResultInput.success });
+        opts.signal?.throwIfAborted();
         runner.processToolResultForSession(sessionId, JSON.stringify(toolResultInput));
         first = false;
         continue;
@@ -491,6 +492,35 @@ async function createClientCoreRuntime(options) {
     }
   }
 
+  async function runTurn(prompt, opts = {}) {
+    if (activeTurn) throw new Error('runtime already has an active turn');
+    const controller = new AbortController();
+    const turn = { controller, steps: 0 };
+    activeTurn = turn;
+    try {
+      if (opts.signal) {
+        if (opts.signal.aborted) controller.abort(opts.signal.reason);
+        else opts.signal.addEventListener('abort', turn.abortParent = () => controller.abort(opts.signal.reason), { once: true });
+      }
+      return await performTurn(prompt, { ...opts, signal: controller.signal });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      err.stepsUsed = turn.steps;
+      err.sessionId = sessionId;
+      throw err;
+    } finally {
+      if (turn.abortParent) opts.signal.removeEventListener('abort', turn.abortParent);
+      activeTurn = null;
+      if (resetPending) { resetPending = false; resetSession(); }
+    }
+  }
+
+  function cancelTurn() {
+    if (!activeTurn) return false;
+    activeTurn.controller.abort(new Error('runtime turn cancelled'));
+    return true;
+  }
+
   function getState() {
     requireConnected();
     return JSON.parse(runner.getState(sessionId));
@@ -502,6 +532,7 @@ async function createClientCoreRuntime(options) {
 
   function resetSession() {
     if (!sessionId) return false;
+    if (activeTurn) { resetPending = true; cancelTurn(); return true; }
     const removed = runner.resetSession(sessionId);
     if (channel) {
       channel.stop();
@@ -513,12 +544,14 @@ async function createClientCoreRuntime(options) {
   }
 
   function close() {
+    closed = true;
+    cancelTurn();
     if (channel) {
       channel.stop();
       channel = null;
     }
     connected = false;
-    releaseRuntimeHooksProvider(hooksOwnerToken);
+
   }
 
   const runtime = {
@@ -538,6 +571,7 @@ async function createClientCoreRuntime(options) {
       return () => listeners.delete(listener);
     },
     runTurn,
+    cancelTurn,
     executeTool,
     getState,
     getToolsPrompt,

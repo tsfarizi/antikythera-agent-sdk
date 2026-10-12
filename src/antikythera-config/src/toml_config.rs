@@ -1,6 +1,6 @@
-//! TOML serialization helpers for [`super::schema::AppConfig`].
+//! TOML serialization helpers for [`crate::schema::AppConfig`].
 //!
-//! The canonical struct definitions live in [`super::schema`].  This module
+//! The canonical struct definitions live in [`crate::schema`].  This module
 //! provides the thin serialize/deserialize/load/save functions that operate
 //! on the TOML text file (`app.toml`).
 
@@ -52,8 +52,6 @@ pub fn save_config(config: &AppConfig, path: Option<&Path>) -> Result<(), String
 
     Ok(())
 }
-
-// ── Backwards-compatible type aliases ────────────────────────────────────────
 
 /// Backwards-compatible alias.  Prefer [`AppConfig`] directly.
 pub type TomlAppConfig = AppConfig;

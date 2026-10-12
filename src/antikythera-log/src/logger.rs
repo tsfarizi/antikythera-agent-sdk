@@ -3,10 +3,6 @@
 use crate::entries::*;
 use std::sync::{Arc, Mutex};
 
-// ============================================================================
-// Log Buffer
-// ============================================================================
-
 /// Thread-safe log buffer
 #[derive(Clone, Debug)]
 pub struct LogBuffer {
@@ -43,7 +39,6 @@ impl LogBuffer {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.push(entry);
 
-        // Trim if exceeds capacity
         if entries.len() > self.max_capacity {
             let drain_count = entries.len() - self.max_capacity;
             entries.drain(0..drain_count);
@@ -54,7 +49,6 @@ impl LogBuffer {
     pub fn get_logs(&self, filter: &LogFilter) -> LogBatch {
         let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Apply filter
         let filtered: Vec<_> = entries
             .iter()
             .filter(|e| filter.matches(e))
@@ -63,7 +57,6 @@ impl LogBuffer {
 
         let total_count = filtered.len();
 
-        // Apply pagination
         let offset = filter.offset.unwrap_or(0);
         let limit = filter.limit.unwrap_or(total_count);
         let start = offset.min(total_count);
@@ -108,10 +101,6 @@ impl LogBuffer {
     }
 }
 
-// ============================================================================
-// Logger
-// ============================================================================
-
 impl Logger {
     /// Create a new logger
     pub fn new(session_id: impl Into<String>) -> Self {
@@ -132,10 +121,6 @@ impl Logger {
             subscribers: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
-
-    // ========================================================================
-    // Logging Methods
-    // ========================================================================
 
     /// Log at DEBUG level
     pub fn debug(&self, message: impl Into<String>) {
@@ -201,10 +186,6 @@ impl Logger {
         self.notify_subscribers(entry);
     }
 
-    // ========================================================================
-    // Retrieval Methods (Periodic Polling)
-    // ========================================================================
-
     /// Get logs matching filter
     pub fn get_logs(&self, filter: &LogFilter) -> LogBatch {
         self.buffer.get_logs(filter)
@@ -220,10 +201,6 @@ impl Logger {
         let batch = self.buffer.get_logs(filter);
         batch.to_json()
     }
-
-    // ========================================================================
-    // Buffer Management
-    // ========================================================================
 
     /// Clear all logs
     pub fn clear(&self) {
@@ -245,11 +222,9 @@ impl Logger {
         &self.session_id
     }
 
-    // ========================================================================
-    // Subscriber Methods (only available with "subscriber" feature)
-    // ========================================================================
-
     #[cfg(feature = "subscriber")]
+    /// Subscriber Methods (only available with "subscriber" feature).
+    ///
     fn notify_subscribers(&self, entry: LogEntry) {
         let mut subscribers = self.subscribers.lock().unwrap_or_else(|e| e.into_inner());
         let mut to_remove = Vec::new();

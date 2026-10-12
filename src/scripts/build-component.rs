@@ -15,22 +15,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-// ── ANSI helpers ─────────────────────────────────────────────────────────────
-
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const RED: &str = "\x1b[31m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
-// Interfaces whose implementation lives outside the scanned crates
-// (e.g. `plugin/antikythera-toolrunner`, host-authored hooks
-// components, host-supplied runtime-hooks wired at runtime) are not
-// subject to this conformance check; their drift is caught by the real
-// wit-parser during `cargo component build`.
+/// Interfaces whose implementation lives outside the scanned crates (e.g.
+/// `plugin/antikythera-toolrunner`, host-authored hooks components, host-supplied runtime-hooks
+/// wired at runtime) are not subject to this conformance check; their drift is caught by the real
+/// wit-parser during `cargo component build`.
+///
 const SKIPPED_INTERFACES: &[&str] = &["tool-registry", "logic-hooks", "runtime-hooks"];
-
-// ── Parsed WIT structures ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 struct WitRecord {
@@ -57,8 +53,6 @@ struct WitInterface {
     functions: Vec<WitFunction>,
 }
 
-// ── Parsed Rust structures ───────────────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 struct RustStruct {
     name: String,
@@ -77,8 +71,6 @@ struct RustFunction {
     params: Vec<RustField>,
     return_type: Option<String>,
 }
-
-// ── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -101,7 +93,6 @@ fn run_validate() {
     let root = project_root();
     let wit_path = root.join("wit").join("antikythera.wit");
 
-    // ── 1. Read WIT file ──────────────────────────────────────────────────
     if !wit_path.exists() {
         eprintln!("{RED}✗ WIT file not found: {}{RESET}", wit_path.display());
         exit(1);
@@ -131,7 +122,6 @@ fn run_validate() {
         wit_interfaces.len()
     );
 
-    // ── 2. Scan Rust sources ──────────────────────────────────────────────
     let sdk_src = root.join("antikythera-sdk").join("src");
     let core_src = root.join("antikythera-core").join("src");
 
@@ -144,7 +134,6 @@ fn run_validate() {
         rust_fns.len()
     );
 
-    // ── 3. Validate records ───────────────────────────────────────────────
     let mut drift_count: usize = 0;
 
     println!("{BOLD}--- Record Validation ---{RESET}");
@@ -173,7 +162,6 @@ fn run_validate() {
     }
     println!();
 
-    // ── 4. Validate interfaces ────────────────────────────────────────────
     println!("{BOLD}--- Interface Validation ---{RESET}");
     for wit_iface in &wit_interfaces {
         if SKIPPED_INTERFACES.contains(&wit_iface.name.as_str()) {
@@ -232,13 +220,10 @@ fn run_validate() {
                 }
             }
         }
-        if !iface_drift {
-            // already printed per-function
-        }
+        if !iface_drift {}
     }
     println!();
 
-    // ── 5. Report ─────────────────────────────────────────────────────────
     if drift_count == 0 {
         println!("{GREEN}{BOLD}✓ WIT file is conformant with Rust sources.{RESET}");
         exit(0);
@@ -248,15 +233,12 @@ fn run_validate() {
     }
 }
 
-// ── WIT parsing ──────────────────────────────────────────────────────────────
-
 fn parse_wit_records(content: &str) -> Vec<WitRecord> {
     let mut records = Vec::new();
     let mut lines = content.lines().peekable();
 
     while let Some(line) = lines.next() {
         let trimmed = line.trim();
-        // Match: record <name> {
         if trimmed.starts_with("record ") && trimmed.contains('{') {
             let name = trimmed
                 .trim_start_matches("record ")
@@ -274,7 +256,6 @@ fn parse_wit_records(content: &str) -> Vec<WitRecord> {
                 if ft.is_empty() || ft.starts_with("//") || ft.starts_with("///") {
                     continue;
                 }
-                // Parse: name: type,
                 if let Some(colon) = ft.find(':') {
                     let fname = ft[..colon].trim().to_string();
                     let ftype = ft[colon + 1..]
@@ -302,7 +283,6 @@ fn parse_wit_interfaces(content: &str) -> Vec<WitInterface> {
 
     while let Some(line) = lines.next() {
         let trimmed = line.trim();
-        // Match: interface <name> {
         if trimmed.starts_with("interface ") && trimmed.contains('{') {
             let name = trimmed
                 .trim_start_matches("interface ")
@@ -320,7 +300,6 @@ fn parse_wit_interfaces(content: &str) -> Vec<WitInterface> {
                 if ft.is_empty() || ft.starts_with("//") || ft.starts_with("///") {
                     continue;
                 }
-                // Parse: name(params) -> return-type;
                 if let Some(func) = parse_wit_function_sig(ft) {
                     functions.push(func);
                 }
@@ -333,11 +312,11 @@ fn parse_wit_interfaces(content: &str) -> Vec<WitInterface> {
     interfaces
 }
 
+/// Canonical WIT declares functions as `name: func(params) -> ret;`; normalize that form to the
+/// legacy `name(params)` shape so the rest of the parser is unchanged.
+///
 fn parse_wit_function_sig(line: &str) -> Option<WitFunction> {
     let line = line.trim().trim_end_matches(';');
-    // Canonical WIT declares functions as `name: func(params) -> ret;`;
-    // normalize that form to the legacy `name(params)` shape so the rest
-    // of the parser is unchanged.
     let line = line.replace(": func(", "(");
     let paren_open = line.find('(')?;
     let name = line[..paren_open].trim().to_string();
@@ -378,8 +357,6 @@ fn parse_wit_params(params_str: &str) -> Vec<WitField> {
     result
 }
 
-// ── Rust source scanning ─────────────────────────────────────────────────────
-
 fn scan_rust_structs(dirs: &[&Path]) -> Vec<RustStruct> {
     let mut structs = Vec::new();
     for dir in dirs {
@@ -396,7 +373,6 @@ fn scan_structs_recursive(dir: &Path, structs: &mut Vec<RustStruct>) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                // skip target, .git, etc.
                 if let Some(name) = path.file_name().and_then(|n| n.to_str())
                     && (name == "target" || name == ".git" || name == "node_modules")
                 {
@@ -455,7 +431,6 @@ fn parse_rust_fields(content: &str) -> Vec<RustField> {
         if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
             continue;
         }
-        // Handle pub(crate) and pub
         let trimmed = trimmed
             .strip_prefix("pub(crate)")
             .or_else(|| trimmed.strip_prefix("pub"))
@@ -621,12 +596,13 @@ fn parse_single_rust_param(param: &str) -> Option<RustField> {
     }
 }
 
-// ── Comparison logic ─────────────────────────────────────────────────────────
-
+/// Checks each WIT field exists in Rust struct.
+///
+/// Checks for extra Rust fields not in WIT.
+///
 fn compare_record_fields(wit: &WitRecord, rust: &RustStruct) -> Vec<String> {
     let mut diffs = Vec::new();
 
-    // Check each WIT field exists in Rust struct
     for wit_field in &wit.fields {
         let rust_field_name = kebab_to_snake(&wit_field.name);
         match rust.fields.iter().find(|f| f.name == rust_field_name) {
@@ -648,7 +624,6 @@ fn compare_record_fields(wit: &WitRecord, rust: &RustStruct) -> Vec<String> {
         }
     }
 
-    // Check for extra Rust fields not in WIT
     for rust_field in &rust.fields {
         let wit_name = snake_to_kebab(&rust_field.name);
         if !wit.fields.iter().any(|f| f.name == wit_name) {
@@ -662,10 +637,12 @@ fn compare_record_fields(wit: &WitRecord, rust: &RustStruct) -> Vec<String> {
     diffs
 }
 
+/// Runner functions report `AgentRunnerError` in Rust but the WIT boundary flattens it to
+/// `string` (`e.to_string()` in the export shim); treat the two as equivalent for conformance.
+///
 fn compare_function(wit: &WitFunction, rust: &RustFunction) -> Vec<String> {
     let mut diffs = Vec::new();
 
-    // Compare parameter count
     if wit.params.len() != rust.params.len() {
         diffs.push(format!(
             "parameter count: WIT has {}, Rust has {}",
@@ -674,13 +651,9 @@ fn compare_function(wit: &WitFunction, rust: &RustFunction) -> Vec<String> {
         ));
     }
 
-    // Compare return type
     match (&wit.return_type, &rust.return_type) {
         (Some(wit_ret), Some(rust_ret)) => {
             let wit_as_rust = wit_type_to_rust(wit_ret);
-            // Runner functions report `AgentRunnerError` in Rust but the WIT
-            // boundary flattens it to `string` (`e.to_string()` in the export
-            // shim); treat the two as equivalent for conformance.
             let rust_normalized = rust_ret.replace("AgentRunnerError", "String");
             if !type_equivalent(&wit_as_rust, &rust_normalized) {
                 diffs.push(format!(
@@ -700,8 +673,6 @@ fn compare_function(wit: &WitFunction, rust: &RustFunction) -> Vec<String> {
 
     diffs
 }
-
-// ── Type mapping ─────────────────────────────────────────────────────────────
 
 fn wit_type_to_rust(wit: &str) -> String {
     match wit {
@@ -743,7 +714,6 @@ fn wit_type_to_rust(wit: &str) -> String {
 }
 
 fn type_equivalent(rust_a: &str, rust_b: &str) -> bool {
-    // Normalize whitespace and compare
     let normalize = |s: &str| -> String {
         s.chars()
             .filter(|c| !c.is_whitespace())
@@ -752,8 +722,6 @@ fn type_equivalent(rust_a: &str, rust_b: &str) -> bool {
     };
     normalize(rust_a) == normalize(rust_b)
 }
-
-// ── Case conversion helpers ──────────────────────────────────────────────────
 
 fn kebab_to_camel(input: &str) -> String {
     let mut result = String::new();
@@ -778,8 +746,6 @@ fn kebab_to_snake(input: &str) -> String {
 fn snake_to_kebab(input: &str) -> String {
     input.replace('_', "-")
 }
-
-// ── Brace matching ───────────────────────────────────────────────────────────
 
 fn find_matching_brace(content: &str) -> Option<(usize, String)> {
     if !content.starts_with('{') {
@@ -809,8 +775,6 @@ fn find_matching_brace(content: &str) -> Option<(usize, String)> {
     }
     None
 }
-
-// ── Project root ─────────────────────────────────────────────────────────────
 
 fn project_root() -> PathBuf {
     let mut current = env::current_exe()

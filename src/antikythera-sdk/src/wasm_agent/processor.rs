@@ -32,15 +32,13 @@ fn transition_and_log(
         .map_err(|e| e.to_string())
 }
 
-// ============================================================================
-// LLM Response Processing
-// ============================================================================
-
 /// Process LLM response and determine next action.
 ///
 /// Accepts the framework generic JSON format or plain text.
 /// The host must normalize provider-native output (OpenAI choices, Gemini
 /// candidates, Anthropic content arrays) before calling this function.
+/// FSM: LlmStreaming -> LlmCommitted (runner set LlmStreaming before calling).
+///
 pub fn process_llm_response(
     state: &mut AgentState,
     llm_response_content: &str,
@@ -52,7 +50,6 @@ pub fn process_llm_response(
         ));
     }
 
-    // FSM: LlmStreaming -> LlmCommitted (runner set LlmStreaming before calling)
     transition_and_log(
         state,
         AgentFsmState::LlmStreaming,
@@ -147,10 +144,6 @@ fn parse_final_response(parsed: &serde_json::Value) -> Option<serde_json::Value>
         .and_then(|v| if v.is_array() { None } else { Some(v.clone()) })
 }
 
-// ============================================================================
-// Tool Result Processing
-// ============================================================================
-
 /// Process tool execution result and build next prompt
 pub fn process_tool_result(
     state: &mut AgentState,
@@ -192,7 +185,6 @@ pub fn process_tool_result(
         }),
     });
 
-    // FSM: ToolRequested -> ToolResultProcessed
     transition_and_log(
         state,
         AgentFsmState::ToolRequested,
@@ -201,10 +193,6 @@ pub fn process_tool_result(
 
     Ok(message)
 }
-
-// ============================================================================
-// Prompt Building
-// ============================================================================
 
 /// Build system prompt for LLM
 pub fn build_system_prompt(template: &str, variables: &PromptVariables) -> String {
@@ -252,10 +240,6 @@ pub fn build_llm_messages(system_prompt: &str, state: &AgentState) -> Vec<HashMa
     messages
 }
 
-// ============================================================================
-// Validation
-// ============================================================================
-
 /// Validate JSON against schema
 pub fn validate_json_schema(
     schema: &serde_json::Value,
@@ -279,10 +263,6 @@ pub fn validate_json_schema(
 
     Ok(())
 }
-
-// ============================================================================
-// Tool Registry Validation
-// ============================================================================
 
 /// Validate a tool call against the registered tool definitions.
 ///

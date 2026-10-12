@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -64,20 +65,14 @@ def parse_server_tool(spec: str) -> Tuple[str, Any]:
     (mirror `ServerToolSpec::parse`, config.rs); sisa harus JSON valid."""
     colon = spec.find(":")
     if colon == -1:
-        raise ValueError(
-            f"invalid --server-tool '{spec}': expected <name>:<response-json>"
-        )
+        raise ValueError(f"invalid --server-tool '{spec}': expected <name>:<response-json>")
     name = spec[:colon].strip()
     if not name:
-        raise ValueError(
-            f"invalid --server-tool '{spec}': tool name must not be empty"
-        )
+        raise ValueError(f"invalid --server-tool '{spec}': tool name must not be empty")
     try:
-        response = json.loads(spec[colon + 1:])
+        response = json.loads(spec[colon + 1 :])
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"invalid --server-tool response-json for tool '{name}': {exc}"
-        ) from exc
+        raise ValueError(f"invalid --server-tool response-json for tool '{name}': {exc}") from exc
     return name, response
 
 
@@ -85,8 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m antikythera_agent.server",
         description=(
-            "Antikythera HTTP wire bridge server "
-            "(drop-in peer of the Rust server runtime, D2)."
+            "Antikythera HTTP wire bridge server (drop-in peer of the Rust server runtime, D2)."
         ),
     )
     parser.add_argument(
@@ -135,16 +129,31 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Mirror main.rs: --provider-stub mengganti provider "stub" (StubProvider) dan menjadikannya
+    default.
+
+    Registrasi = grant (mirror main.rs): allowlist server otomatis sehingga gate default-deny
+    tidak menolak tool terdaftar.
+
+    Mirror main.rs: allowlist ketiga destination (local/remote/mcp).
+
+    Blokir selamanya (mirror `std::thread::park()` main.rs); Ctrl+C menutup server dan keluar
+    bersih.
+    """
     args = build_parser().parse_args(argv)
     server = None
     try:
         bind, port = parse_bind(args.bind)
         providers: Optional[Dict[str, Any]] = None
         if args.provider_stub is not None:
-            # Mirror main.rs: --provider-stub mengganti provider "stub"
-            # (StubProvider) dan menjadikannya default.
             providers = {"stub": StubProvider(args.provider_stub)}
         options = AgentServerOptions(
+            auth_token=os.environ.get("ANTIKYTHERA_AUTH_TOKEN"),
+            allowed_origins=[
+                value.strip()
+                for value in os.environ.get("ANTIKYTHERA_ALLOWED_ORIGINS", "").split(",")
+                if value.strip()
+            ],
             bind=bind,
             port=port,
             component_dir=Path(args.component_dir) if args.component_dir else None,
@@ -157,15 +166,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         server = createAgentServer(options)
         for spec in args.server_tool or []:
             name, response = parse_server_tool(spec)
-            # Registrasi = grant (mirror main.rs): allowlist server otomatis
-            # sehingga gate default-deny tidak menolak tool terdaftar.
             server.register_server_tool(
                 {"name": name, "description": SERVER_TOOL_DESCRIPTION},
                 handler=lambda _args, response=response: response,
             )
             server.gate.allow_tool("server", name)
         for name in args.allow_tool or []:
-            # Mirror main.rs: allowlist ketiga destination (local/remote/mcp).
             server.gate.allow_tool("server", name)
             server.gate.allow_tool("client", name)
             server.gate.allow_tool("mcp", name)
@@ -176,8 +182,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     print(f"[server-runtime] HTTP wire bridge listening on {url}", flush=True)
     try:
-        # Blokir selamanya (mirror `std::thread::park()` main.rs); Ctrl+C
-        # menutup server dan keluar bersih.
         threading.Event().wait()
     except KeyboardInterrupt:
         return 0

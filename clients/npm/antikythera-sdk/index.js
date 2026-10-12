@@ -14,10 +14,8 @@ const path = require('path');
 
 const { createAgentRuntime } = require('./runtime/index.js');
 const { Orchestrator } = require('./orchestrator.js');
+const { AgentDeployment, createAgentDeployment } = require('./delivery/index.js');
 
-// ============================================================================
-// Types
-// ============================================================================
 
 /**
  * @typedef {Object} AgentConfig
@@ -95,9 +93,6 @@ const { Orchestrator } = require('./orchestrator.js');
  * @property {string[]} [tags] - Tags for categorization
  */
 
-// ============================================================================
-// PromptManager
-// ============================================================================
 
 /**
  * Centralized prompt management for agents.
@@ -253,9 +248,6 @@ class PromptManager {
   }
 }
 
-// ============================================================================
-// SessionManager
-// ============================================================================
 
 /**
  * Session lifecycle management.
@@ -374,9 +366,6 @@ class SessionManager {
   }
 }
 
-// ============================================================================
-// Exports
-// ============================================================================
 
 /**
  * Get the SDK version.
@@ -396,5 +385,7 @@ module.exports = {
   SessionManager,
   createAgentRuntime,
   Orchestrator,
+  AgentDeployment,
+  createAgentDeployment,
   getVersion
 };

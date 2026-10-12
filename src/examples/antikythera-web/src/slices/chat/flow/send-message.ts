@@ -6,9 +6,11 @@ import { eventBus } from '@/shared/bus/event-bus'
 import { createMessage, type Message, type ToolCallRecord } from '../core/message'
 import type { ChatStatus } from '../core/state'
 
-// The server runtime binary binds 127.0.0.1:8787 by default
-// (antikythera-server-runtime/src/config.rs); the URL is configurable via
-// VITE_SERVER_URL or localStorage before the first runtime creation.
+/**
+ * The server runtime binary binds 127.0.0.1:8787 by default
+ * (antikythera-server-runtime/src/config.rs); the URL is configurable via VITE_SERVER_URL or
+ * localStorage before the first runtime creation.
+ */
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:8787'
 
 const messages = ref<Message[]>([])
@@ -178,12 +180,16 @@ export function useChat() {
       })
     } catch (e: unknown) {
       console.error('[Chat] ERROR:', e)
-      // A failed turn may leave the runner mid-stream; drop the session so
-      // the next message reconnects with a fresh runner session.
+      /**
+       * A failed turn may leave the runner mid-stream; drop the session so the next message
+       * reconnects with a fresh runner session.
+       */
       try {
         runtime?.resetSession()
       } catch {
-        // reset failure is non-fatal; the next connect attempt re-inits
+        /**
+         * Reset failure is non-fatal; the next connect attempt re-inits.
+         */
       }
       sessionId.value = null
       status.value = 'error'
@@ -202,12 +208,13 @@ export function useChat() {
   }
 
   function switchSession(newSessionId: string) {
-    // The runtime owns exactly one runner session; a switch request resets
-    // the local transcript and the runner session for a fresh conversation.
+    /**
+     * The runtime owns exactly one runner session; a switch request resets the local transcript
+     * and the runner session for a fresh conversation.
+     */
     try {
       runtime?.resetSession()
     } catch {
-      // ignore reset failure
     }
     sessionId.value = null
     messages.value = []

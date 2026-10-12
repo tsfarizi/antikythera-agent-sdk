@@ -42,13 +42,14 @@ impl ParsedOutput {
 }
 
 /// Parse raw tool output into structured format.
+/// Try to parse as MCP tool result with content array.
+///
 pub fn parse_step_output(output: &Value, created_at: &str) -> ParsedOutput {
     let mut parsed = ParsedOutput {
         raw: output.clone(),
         ..Default::default()
     };
 
-    // Try to parse as MCP tool result with content array
     if let Some(content) = output.get("content").and_then(|c| c.as_array()) {
         for item in content {
             if let Ok(content_item) = serde_json::from_value::<ContentItem>(item.clone()) {

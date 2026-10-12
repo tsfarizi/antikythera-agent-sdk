@@ -1,3 +1,7 @@
+//! The pure classification/merge/precedence machinery below is compiled on native for the unit
+//! tests; in native non-test builds it is consumed only by the cfg-gated wasm wrappers further
+//! down, so dead-code analysis flags it.
+//!
 //! Wiring of the imported `runtime-hooks` WIT interface into the runner pipeline.
 //!
 //! The host supplies this interface at runtime (wasmtime linker on the
@@ -18,13 +22,10 @@
 //! Contract (identical to `logic-hooks`):
 //! - Ok `{"passthrough": true}` (exactly the single-key object) -> use the
 //!   SDK default at this pipeline point;
-//! - Ok <any other JSON object> -> override the SDK decision at this point;
+//! - Ok any other JSON object -> override the SDK decision at this point;
 //! - Err(message) / unparseable / non-object -> fail-closed: abort the
 //!   operation and surface the error. A failing hook never falls back.
 
-// The pure classification/merge/precedence machinery below is compiled on
-// native for the unit tests; in native non-test builds it is consumed only by
-// the cfg-gated wasm wrappers further down, so dead-code analysis flags it.
 #![allow(dead_code)]
 
 use super::AgentRunnerError;
@@ -42,7 +43,7 @@ use antikythera_log::LogLevel;
 pub(super) enum HookDecision {
     /// Ok `{"passthrough": true}` — use the SDK default at this pipeline point.
     Passthrough,
-    /// Ok <any other JSON object> — override the SDK decision at this point.
+    /// Ok any other JSON object — override the SDK decision at this point.
     Override(serde_json::Value),
     /// Err / unparseable / non-object — fail-closed abort.
     Failed(String),
@@ -144,8 +145,6 @@ pub(super) fn resolve_precedence(
     }
 }
 
-// ── wasm-only shim callers ────────────────────────────────────────────────────
-
 #[cfg(all(feature = "component", target_family = "wasm"))]
 fn call_prepare_turn(state: &AgentState, request_json: &str) -> HookDecision {
     let session_state_json = match state.to_json() {
@@ -190,8 +189,6 @@ fn call_handle_tool_result(state: &AgentState, tool_result_json: &str) -> HookDe
     );
     classify_decision("handle-tool-result", result)
 }
-
-// ── apply functions (wasm only; entered on composed passthrough, A1a) ─────────
 
 /// Applies the `prepare-turn` runtime override to the SDK default prepared
 /// turn. Invoked only when the composed `logic-hooks` provider passed through

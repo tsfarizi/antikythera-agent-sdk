@@ -36,17 +36,18 @@ from antikythera_agent.core import (
     TaskResult,
     get_version,
 )
+from antikythera_agent.delivery import AgentDeployment, DeliveryServer
 from antikythera_agent.plugin import WasmRuntime, WasmRuntimeError
 
 __version__ = "1.8.5"
 __all__ = [
-    # Core classes
     "Agent",
+    "AgentDeployment",
+    "DeliveryServer",
     "Orchestrator",
     "SessionManager",
     "PromptManager",
     "WasmRuntime",
-    # Types
     "AgentConfig",
     "AgentResult",
     "AgentProfileConfig",
@@ -55,8 +56,6 @@ __all__ = [
     "OrchestratorConfig",
     "SessionInfo",
     "PromptConfig",
-    # Errors
     "WasmRuntimeError",
-    # Utilities
     "get_version",
 ]

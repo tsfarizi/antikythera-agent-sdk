@@ -8,8 +8,11 @@ use super::toml_config;
 #[cfg(not(target_arch = "wasm32"))]
 use dotenvy::from_filename;
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Once;
 
+/// Initialize dotenv loading once for native process configuration.
+#[cfg(not(target_arch = "wasm32"))]
 static ENV_LOADER: Once = Once::new();
 
 /// Load and validate configuration from TOML

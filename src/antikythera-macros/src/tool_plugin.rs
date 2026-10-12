@@ -27,16 +27,23 @@ use syn::{Data, DeriveInput, Fields};
 use crate::attr_utils::parse_meta_string;
 use crate::tool_def::{collect_field_schema, extract_tool_attrs};
 
+/// Extracts #`tool(name = "...", description = "...")` from the struct.
+///
+/// Extracts #`plugin(handler = "...", definition = "...")` from the struct.
+///
+/// Extracts fields from the struct.
+///
+/// `definition()` mirrors `definition_json()` when the configured type is serde_json::Value (the
+/// default); otherwise it deserializes through serde, failing loudly if the canonical shape no
+/// longer fits the type.
+///
 pub(crate) fn impl_tool_plugin(input: &DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
 
-    // Extract #[tool(name = "...", description = "...")] from the struct.
     let (tool_name, tool_description) = extract_tool_attrs(input)?;
 
-    // Extract #[plugin(handler = "...", definition = "...")] from the struct.
     let (handler, definition_type, definition_is_json_value) = extract_plugin_attrs(input)?;
 
-    // Extract fields from the struct.
     let fields = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields) => fields,
@@ -57,9 +64,6 @@ pub(crate) fn impl_tool_plugin(input: &DeriveInput) -> syn::Result<TokenStream> 
 
     let (property_inserts, definition_inserts, required_tokens) = collect_field_schema(fields)?;
 
-    // `definition()` mirrors `definition_json()` when the configured type is
-    // serde_json::Value (the default); otherwise it deserializes through
-    // serde, failing loudly if the canonical shape no longer fits the type.
     let definition_fn = if definition_is_json_value {
         quote! {
             /// Returns the full tool definition in the canonical serde shape.

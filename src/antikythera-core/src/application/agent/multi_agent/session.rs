@@ -73,6 +73,10 @@ impl OrchestratorSessionManager {
     ///
     /// If a session with `session_id` already exists, its `last_activity` is
     /// refreshed and it is returned. Otherwise a new session is created.
+    /// Existing session — refresh activity.
+    ///
+    /// Capacity check — try eviction first.
+    ///
     pub fn get_or_create(
         &self,
         session_id: &str,
@@ -80,7 +84,6 @@ impl OrchestratorSessionManager {
     ) -> Result<ManagedSession, SessionError> {
         let mut sessions = self.sessions.lock().unwrap();
 
-        // Existing session — refresh activity.
         if let Some(session) = sessions.get(session_id) {
             let mut session = session.clone();
             session.last_activity = Instant::now();
@@ -90,7 +93,6 @@ impl OrchestratorSessionManager {
             return Ok(session);
         }
 
-        // Capacity check — try eviction first.
         if sessions.len() >= self.max_sessions {
             self.evict_expired(&mut sessions);
             if sessions.len() >= self.max_sessions {
@@ -103,7 +105,6 @@ impl OrchestratorSessionManager {
             }
         }
 
-        // Create new session.
         let session = ManagedSession {
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),

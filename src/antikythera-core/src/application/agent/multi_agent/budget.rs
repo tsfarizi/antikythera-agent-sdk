@@ -40,10 +40,6 @@ use std::sync::{
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// OrchestratorBudget
-// ============================================================================
-
 /// Shared concurrency and step-budget guardrails for the orchestrator.
 ///
 /// Clone this struct freely — all clones share the same atomic counters.
@@ -61,7 +57,6 @@ pub struct OrchestratorBudget {
     /// `None` means unlimited.
     pub max_total_tasks: Option<usize>,
 
-    // ---- shared atomic state -----------------------------------------------
     consumed_steps: Arc<AtomicUsize>,
     dispatched_tasks: Arc<AtomicUsize>,
 }
@@ -84,10 +79,6 @@ impl OrchestratorBudget {
         }
     }
 
-    // ----------------------------------------------------------------
-    // Builder helpers
-    // ----------------------------------------------------------------
-
     /// Set the concurrent-task limit.
     pub fn with_max_concurrent_tasks(mut self, limit: usize) -> Self {
         self.max_concurrent_tasks = Some(limit);
@@ -106,16 +97,14 @@ impl OrchestratorBudget {
         self
     }
 
-    // ----------------------------------------------------------------
-    // Accounting helpers (called by the orchestrator/scheduler)
-    // ----------------------------------------------------------------
-
     /// Increment the dispatched-task counter and return the new total.
     ///
     /// Call this *before* dispatching a task.  The orchestrator should check
     /// [`is_task_budget_exhausted`] after this returns.
     ///
     /// [`is_task_budget_exhausted`]: OrchestratorBudget::is_task_budget_exhausted
+    /// Accounting helpers (called by the orchestrator/scheduler).
+    ///
     pub fn record_task_dispatch(&self) -> usize {
         self.dispatched_tasks.fetch_add(1, Ordering::Relaxed) + 1
     }
@@ -124,10 +113,6 @@ impl OrchestratorBudget {
     pub fn record_steps(&self, steps: usize) -> usize {
         self.consumed_steps.fetch_add(steps, Ordering::Relaxed) + steps
     }
-
-    // ----------------------------------------------------------------
-    // State readers
-    // ----------------------------------------------------------------
 
     /// Current cumulative step count.
     pub fn consumed_steps(&self) -> usize {
@@ -171,10 +156,6 @@ impl OrchestratorBudget {
         }
     }
 }
-
-// ============================================================================
-// BudgetSnapshot
-// ============================================================================
 
 /// A point-in-time, serialisable view of an [`OrchestratorBudget`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

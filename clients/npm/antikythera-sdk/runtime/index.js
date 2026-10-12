@@ -65,6 +65,8 @@ module.exports = {
   createSseChannel,
   createControlHandler,
   installRuntimeHooksProvider,
+  acquireRuntimeHooksProvider,
+  releaseRuntimeHooksProvider,
   wrapHookFunction,
   invokeHook,
   loadRunnerModule,

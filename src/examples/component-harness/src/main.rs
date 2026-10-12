@@ -17,7 +17,7 @@
 //!   custom (example hooks)  → decide-action forces action=final
 //!                             content=hook-forced-final, NO tool_result echo
 //!
-//! B4 extension: the final probe is GENERIC — `--expect-content=<string>`
+//! B4 extension: the final probe is GENERIC — `--expect-content=CONTENT`
 //! (default `hook-forced-final`, so the A5 invocation is unchanged) asserts
 //! the commit envelope carries `action=final` + `content=<string>` and no
 //! tool_result. The same init/prepare/commit/drain flow proves the drop-in
@@ -39,9 +39,9 @@
 //!                  returns content "stub-llm-response" (the guest decides
 //!                  tool-vs-final from its own prompt)
 //!   emit-tool-call allowlist — only "echo" allowed; other → Err
-//!                  "permission: tool '<name>' not in allowlist"
+//!                  "permission: tool NAME not in allowlist"
 //!   save/load-state bounded storage — file under
-//!                  %TEMP%\opencode\c3a-storage\<context-id>.json;
+//!                  %TEMP%\opencode\c3a-storage\CONTEXT_ID.json;
 //!                  path traversal → Err "permission: invalid context id"
 //!   log-message    passthrough to host stderr
 //!
@@ -101,8 +101,8 @@
 //!   -> drain-events
 //!
 //! Usage:
-//!   component-harness [COMPONENT_PATH] [--expect default|final|notimpl]
-//!                     [--expect-content=<string>] [--probe full-loop|quota|allowlist|storage]
+//!   component-harness `COMPONENT_PATH` [--expect default|final|notimpl]
+//!                     [--expect-content=CONTENT] [--probe full-loop|quota|allowlist|storage]
 //!                     [--probe runtime-hooks-passthrough|runtime-hooks-override|runtime-hooks-deny|runtime-hooks-disabled]
 //!                     [--runtime-hooks=passthrough|override|deny]
 
@@ -209,6 +209,8 @@ impl Host for HostState {
 
     /// Allowlist gate: only the builtin `echo` tool may execute. Any other
     /// tool is rejected before execution.
+    /// Builtin echo: returns its arguments verbatim, always success.
+    ///
     fn emit_tool_call(&mut self, event: ToolCallEvent) -> Result<ToolExecutionResult, String> {
         if event.tool_name != "echo" {
             return Err(format!(
@@ -216,7 +218,6 @@ impl Host for HostState {
                 event.tool_name
             ));
         }
-        // Builtin echo: returns its arguments verbatim, always success.
         Ok(ToolExecutionResult {
             tool_name: event.tool_name,
             success: true,
@@ -231,7 +232,7 @@ impl Host for HostState {
         eprintln!("[host-log][{}] {}", event.level, event.message);
     }
 
-    /// Bounded storage gate: the file lives under `<storage_dir>/<context-id>.json`
+    /// Bounded storage gate: the file lives under `<storage_dir>/CONTEXT_ID.json`
     /// and the context-id is validated BEFORE any filesystem operation, so a
     /// traversal id can never escape the storage root.
     fn save_state(&mut self, context_id: String, state_json: String) -> Result<(), String> {
@@ -380,6 +381,28 @@ impl std::fmt::Display for Probe {
     }
 }
 
+/// Runtime-hooks probes exercise the composite (dist) artifact, which is the only component that
+/// imports the runtime-hooks interface; the C3a probes keep their logic-core default.
+///
+/// B4 not-implemented probe: template-hole functions of a logic-core drop-in need no
+/// init/prepare/commit flow, so probe them directly.
+///
+/// 3. commit-llm-response(prepared, llm_response with call_tool -> echo).
+///
+/// Logic-core drop-in: `drain-events` is a template hole (Err not-implemented), so no event queue
+/// exists — the generic final probe treats that as "no events" and continues to assert that no
+/// tool_result was emitted. The default probe keeps the strict error propagation.
+///
+/// Baseline: SDK default behavior must be intact — the composite behaves exactly as the pre-hook
+/// composite did (default-hooks is a no-op passthrough, so the third member changes no behavior).
+///
+/// Generic final probe (B4): the commit envelope MUST carry action=final + content=expect-content
+/// — either the A5 logic-hooks decide-action override (hook-forced-final) or the B4 logic-core
+/// deterministic echo-agent commit (echo-agent-done). The tool MUST NOT execute, so no
+/// tool_result echo may appear.
+///
+/// The notimpl probe returns before the init/prepare/commit flow.
+///
 fn main() -> Result<()> {
     let mut expect = Expect::Default;
     let mut expect_content = "hook-forced-final".to_string();
@@ -439,9 +462,6 @@ fn main() -> Result<()> {
     }
 
     if let Some(probe) = probe {
-        // Runtime-hooks probes exercise the composite (dist) artifact, which
-        // is the only component that imports the runtime-hooks interface; the
-        // C3a probes keep their logic-core default.
         let probe_component = match probe {
             Probe::RuntimeHooksPassthrough
             | Probe::RuntimeHooksOverride
@@ -506,8 +526,6 @@ fn main() -> Result<()> {
         .context("instantiate composite runner export")?;
     let runner = root.antikythera_agent_sdk_runner();
 
-    // B4 not-implemented probe: template-hole functions of a logic-core
-    // drop-in need no init/prepare/commit flow, so probe them directly.
     if expect == Expect::NotImpl {
         println!("--- not-implemented probe (logic-core drop-in) ---");
 
@@ -537,7 +555,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // 1. init(config)
     let config_json = serde_json::json!({
         "session_id": "compose-smoke",
         "max_steps": 5,
@@ -550,7 +567,6 @@ fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("runner init failed: {e}"))?;
     println!("[init] session_id = {session_id}");
 
-    // 2. prepare-user-turn(user message)
     let request_json = serde_json::json!({
         "prompt": "echo hello",
         "session_id": session_id,
@@ -568,7 +584,6 @@ fn main() -> Result<()> {
         prepared["step"], prepared["prompt"]
     );
 
-    // 3. commit-llm-response(prepared, llm_response with call_tool -> echo)
     let llm_response_json = serde_json::json!({
         "action": "call_tool",
         "tool": "echo",
@@ -586,15 +601,9 @@ fn main() -> Result<()> {
         commit["action"], commit["content"], commit["tool_name"], commit["fsm_state"]
     );
 
-    // 4. drain-events(session_id)
     let drain_result = runner.call_drain_events(&mut store, &session_id);
     let events_json = match drain_result {
         Ok(Ok(json)) => json,
-        // Logic-core drop-in: `drain-events` is a template hole
-        // (Err not-implemented), so no event queue exists — the generic
-        // final probe treats that as "no events" and continues to assert
-        // that no tool_result was emitted. The default probe keeps the
-        // strict error propagation.
         Ok(Err(e)) if expect == Expect::Final => {
             println!("[drain] Err tolerated by final probe (logic-core drop-in): {e}");
             "[]".to_string()
@@ -629,9 +638,6 @@ fn main() -> Result<()> {
 
     let pass = match expect {
         Expect::Default => {
-            // Baseline: SDK default behavior must be intact — the composite
-            // behaves exactly as the pre-hook composite did (default-hooks is
-            // a no-op passthrough, so the third member changes no behavior).
             if commit["action"] != "call_tool" {
                 anyhow::bail!("expected commit action=call_tool, got {}", commit["action"]);
             }
@@ -651,12 +657,6 @@ fn main() -> Result<()> {
             true
         }
         Expect::Final => {
-            // Generic final probe (B4): the commit envelope MUST carry
-            // action=final + content=expect-content — either the A5
-            // logic-hooks decide-action override (hook-forced-final) or the
-            // B4 logic-core deterministic echo-agent commit
-            // (echo-agent-done). The tool MUST NOT execute, so no
-            // tool_result echo may appear.
             if commit["action"] != "final" {
                 anyhow::bail!(
                     "FAIL: expected commit action=final (decide-action override), got {}",
@@ -688,7 +688,6 @@ fn main() -> Result<()> {
             );
             true
         }
-        // The notimpl probe returns before the init/prepare/commit flow.
         Expect::NotImpl => unreachable!("notimpl probe handled above"),
     };
 
@@ -969,17 +968,21 @@ fn probe_allowlist(runner: &Runner, store: &mut Store) -> Result<()> {
 /// process-tool-result-for-session("../evil"); the same shared validator
 /// guards save-state, exercised additionally through init with the traversal
 /// id (the rejections surface on host stderr via log-message passthrough).
+/// Init with a traversal id: load-state AND save-state are both rejected; init's contract is a
+/// bare id, so the rejections surface as host logs.
+///
+/// Deterministic assertion: process-tool-result-for-session reaches load-state with the traversal
+/// id and surfaces the permission error.
+///
+/// A valid id still round-trips through the same gates.
+///
 fn probe_storage(runner: &Runner, store: &mut Store) -> Result<()> {
     println!("--- probe: bounded storage (traversal context-id) ---");
 
-    // init with a traversal id: load-state AND save-state are both rejected;
-    // init's contract is a bare id, so the rejections surface as host logs.
     println!("[note] init(\"../evil\") — load-state + save-state rejections visible below");
     let evil_session = probe_init(runner, store, "../evil")?;
     println!("[note] init returned id {evil_session:?} (bare-id contract, errors logged only)");
 
-    // Deterministic assertion: process-tool-result-for-session reaches
-    // load-state with the traversal id and surfaces the permission error.
     let denied = probe_process_tool_result(runner, store, "../evil", "echo")?;
     let error = denied["error"].as_str().unwrap_or_default();
     if !error.contains("permission: invalid context id") {
@@ -990,7 +993,6 @@ fn probe_storage(runner: &Runner, store: &mut Store) -> Result<()> {
     }
     println!("[assert] load-state(\"../evil\") denied: {error}");
 
-    // A valid id still round-trips through the same gates.
     let ok_session = probe_init(runner, store, "c3a-storage")?;
     let _ = probe_prepare(runner, store, &ok_session, "storage probe")?;
     println!("[assert] save-state/load-state round-trip with valid id succeeded");

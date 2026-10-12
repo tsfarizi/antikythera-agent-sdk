@@ -258,6 +258,8 @@ impl StdioMcpTransport {
     }
 
     /// Read newline-delimited responses until the one matching `id`.
+    /// Notifications and other ids are skipped.
+    ///
     async fn read_response(
         &self,
         stdout: &mut BufReader<ChildStdout>,
@@ -285,7 +287,6 @@ impl StdioMcpTransport {
                 }
                 return Ok(value.get("result").cloned().unwrap_or(Value::Null));
             }
-            // Notifications and other ids are skipped.
         }
     }
 }

@@ -45,26 +45,25 @@ class SessionManager:
 
         Returns:
             Session information.
+
+
+        Returns existing session if found.
         """
         now = int(time.time() * 1000)
 
-        # Return existing session if found
         if session_id in self._sessions:
             session = self._sessions[session_id]
             session.last_activity = now
             return session
 
-        # Evict if at capacity
         if len(self._sessions) >= self._max_sessions:
             self._evict_expired()
             if len(self._sessions) >= self._max_sessions:
-                # Evict oldest
                 oldest = min(
                     self._sessions.values(), key=lambda s: s.last_activity
                 )
                 del self._sessions[oldest.session_id]
 
-        # Create new session
         session = SessionInfo(
             session_id=session_id,
             agent_id=agent_id,

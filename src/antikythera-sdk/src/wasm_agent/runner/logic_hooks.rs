@@ -75,15 +75,15 @@ pub(super) fn handle_tool_result_override(
 /// override the hook's object is merged over the default object: fields
 /// present in the override are authoritative, absent fields fall back to the
 /// SDK default.
+/// Composed provider passed through. Precedence A1a: consult the host-supplied `runtime-hooks` at
+/// the same pipeline point; it is skipped entirely when `runtime_hooks_enabled` is false.
+///
 pub(super) fn apply_prepare_turn_override(
     state: &AgentState,
     request_json: &str,
     default_encoded: &str,
 ) -> Result<String, AgentRunnerError> {
     let Some(override_value) = prepare_turn_override(state, request_json)? else {
-        // Composed provider passed through. Precedence A1a: consult the
-        // host-supplied `runtime-hooks` at the same pipeline point; it is
-        // skipped entirely when `runtime_hooks_enabled` is false.
         return super::runtime_hooks::apply_prepare_turn_override(
             state,
             request_json,
@@ -117,15 +117,15 @@ pub(super) fn apply_prepare_turn_override(
 /// envelope so the SDK's bookkeeping fields (`session_id`, `step`,
 /// `fsm_state`) survive a partial override; the merged value is committed as
 /// the action result.
+/// Composed provider passed through. Precedence A1a: consult the host-supplied `runtime-hooks` at
+/// the same pipeline point; it is skipped entirely when `runtime_hooks_enabled` is false.
+///
 pub(super) fn apply_decide_action_override(
     state: &AgentState,
     llm_response_json: &str,
     default_result: &CommitResult,
 ) -> Result<CommitResult, AgentRunnerError> {
     let Some(override_value) = decide_action_override(state, llm_response_json)? else {
-        // Composed provider passed through. Precedence A1a: consult the
-        // host-supplied `runtime-hooks` at the same pipeline point; it is
-        // skipped entirely when `runtime_hooks_enabled` is false.
         return super::runtime_hooks::apply_decide_action_override(
             state,
             llm_response_json,
@@ -160,15 +160,15 @@ pub(super) fn apply_decide_action_override(
 ///
 /// On passthrough the reported input is returned unchanged. On override the
 /// hook's JSON object is used as the tool result, replacing the reported one.
+/// Composed provider passed through. Precedence A1a: consult the host-supplied `runtime-hooks` at
+/// the same pipeline point; it is skipped entirely when `runtime_hooks_enabled` is false.
+///
 pub(super) fn apply_handle_tool_result_override(
     state: &AgentState,
     tool_result_json: &str,
     default_input: &ToolResultInput,
 ) -> Result<ToolResultInput, AgentRunnerError> {
     let Some(override_value) = handle_tool_result_override(state, tool_result_json)? else {
-        // Composed provider passed through. Precedence A1a: consult the
-        // host-supplied `runtime-hooks` at the same pipeline point; it is
-        // skipped entirely when `runtime_hooks_enabled` is false.
         return super::runtime_hooks::apply_handle_tool_result_override(
             state,
             tool_result_json,

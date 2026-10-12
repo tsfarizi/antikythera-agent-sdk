@@ -173,11 +173,26 @@ impl RuntimeServer {
     }
 
     /// Build the server with an explicit provider map (pluggable providers).
+    /// Registers `--server-tool` entries: a deterministic local handler that always returns the
+    /// configured response JSON. Registration already granted the local destination in the policy
+    /// (main.rs), so the default-deny gate accepts these tools without `--allow-tool`.
+    ///
     pub fn new_with_providers(
         config: ServerRuntimeConfig,
         providers: HashMap<String, Arc<dyn LlmProvider>>,
         handle: tokio::runtime::Handle,
     ) -> Result<Self> {
+        anyhow::ensure!(
+            config
+                .auth_token
+                .as_ref()
+                .is_none_or(|token| !token.trim().is_empty()),
+            "auth token must not be empty"
+        );
+        anyhow::ensure!(
+            config.bind_addr.ip().is_loopback() || config.auth_token.is_some(),
+            "non-loopback bind requires an auth token"
+        );
         let engine = Arc::new(wasmtime::Engine::default());
         let policy = Arc::new(config.policy.clone());
         let control = Arc::new(crate::control::ControlChannel::new());
@@ -188,10 +203,6 @@ impl RuntimeServer {
             config.client_id.clone(),
             config.pending_ttl,
         ));
-        // Register `--server-tool` entries: a deterministic local handler that
-        // always returns the configured response JSON. Registration already
-        // granted the local destination in the policy (main.rs), so the
-        // default-deny gate accepts these tools without `--allow-tool`.
         for spec in &config.server_tools {
             let definition = ToolDefinition::simple(
                 spec.name.clone(),
@@ -204,6 +215,8 @@ impl RuntimeServer {
                 .map_err(|e| anyhow::anyhow!("register --server-tool '{}': {e}", spec.name))?;
         }
         let shared = Arc::new(SharedState {
+            auth_token: config.auth_token.clone(),
+            allowed_origins: config.allowed_origins.clone(),
             engine,
             policy,
             control,

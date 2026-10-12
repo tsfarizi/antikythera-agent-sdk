@@ -72,25 +72,13 @@ jobs:
         working-directory: clients
         run: npm install
 
-      - name: Transpile composite WASM component to JS with jco
-        run: |
-          npx --prefix clients jco transpile dist/antikythera-sdk.wasm \
-            --out-dir clients/npm/antikythera-sdk/component \
-            -M "wasi:cli/environment@0.2.3=./wasi-stubs/environment.js" \
-            -M "wasi:cli/exit@0.2.3=./wasi-stubs/exit.js" \
-            -M "wasi:cli/stderr@0.2.3=./wasi-stubs/stderr.js" \
-            -M "wasi:cli/stdin@0.2.3=./wasi-stubs/stdin.js" \
-            -M "wasi:cli/stdout@0.2.3=./wasi-stubs/stdout.js" \
-            -M "wasi:clocks/monotonic-clock@0.2.3=./wasi-stubs/monotonic-clock.js" \
-            -M "wasi:clocks/wall-clock@0.2.3=./wasi-stubs/wall-clock.js" \
-            -M "wasi:filesystem/preopens@0.2.3=./wasi-stubs/preopens.js" \
-            -M "wasi:filesystem/types@0.2.3=./wasi-stubs/types.js" \
-            -M "wasi:io/error@0.2.3=./wasi-stubs/error.js" \
-            -M "wasi:io/streams@0.2.3=./wasi-stubs/streams.js" \
-            -M "wasi:random/random@0.2.3=./wasi-stubs/random.js"
+      - name: Transpile and name both client bundles with jco
+        run: node src/scripts/transpile-client.mjs
 
-      - name: Rename transpiled core modules to semantic names
-        run: node src/scripts/post-transpile-rename.mjs
+      - name: Verify core-module naming and component loading
+        run: |
+          node --test tests/node/core-module-names.test.mjs
+          node tests/node/component-smoke.mjs
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4

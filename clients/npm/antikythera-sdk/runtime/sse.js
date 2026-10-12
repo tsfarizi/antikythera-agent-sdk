@@ -2,7 +2,7 @@
 
 /**
  * SSE control channel client (GET /antikythera/v1/events). Streams the wire
- * event envelope to a handler, resumes on reconnect via `Last-Event-ID`, and
+ * event envelope to a handler, creates a fresh subscription on reconnect, and
  * re-registers `client_id` by keeping it in the request URL.
  */
 
@@ -18,7 +18,7 @@
 function parseFrame(frame) {
   const out = {};
   for (const line of frame.split('\n')) {
-    if (line.startsWith(':')) continue; // comment / keepalive
+    if (line.startsWith(':')) continue;
     const colon = line.indexOf(':');
     const field = colon === -1 ? line : line.slice(0, colon);
     const value = colon === -1 ? '' : line.slice(colon + 1).replace(/^ /, '');
@@ -34,14 +34,17 @@ function parseFrame(frame) {
 }
 
 /**
- * Open an SSE control channel.
+ * Open an SSE control channel and expose its connection readiness promise.
+ * Reconnection creates a fresh subscription without replaying earlier frames.
+ * start() callers receive connection errors through onStatus even when they
+ * do not await ready; await-ready callers receive the same failure as rejection.
  * @param {object} options
  * @param {string} options.url - full events URL including client_id (+ optional session_id)
  * @param {object} [options.headers] - extra request headers
  * @param {(envelope: Envelope, meta: {id?: string}) => void} [options.onEvent]
  * @param {(status: Status) => void} [options.onStatus]
  * @param {boolean} [options.reconnect] - resume with backoff on drop (default true)
- * @returns {{ start: () => void, stop: () => void }}
+ * @returns {{ start: () => void, stop: () => void, ready: Promise<void> }}
  */
 function createSseChannel(options) {
   const url = options.url;
@@ -53,14 +56,16 @@ function createSseChannel(options) {
 
   let controller = null;
   let stopped = false;
-  let lastEventId = null;
   let retries = 0;
   let timer = null;
+  let readyTimer = null;
+  let resolveReady, rejectReady;
+  const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  ready.catch(() => {});
 
   async function pump() {
     onStatus({ state: 'connecting' });
     const headers = { Accept: 'text/event-stream', ...extraHeaders };
-    if (lastEventId) headers['Last-Event-ID'] = lastEventId;
     try {
       const response = await fetch(url, { headers, signal: controller.signal });
       if (!response.ok) {
@@ -70,6 +75,8 @@ function createSseChannel(options) {
         throw new Error('SSE: response has no body');
       }
       retries = 0;
+      clearTimeout(readyTimer);
+      resolveReady();
       onStatus({ state: 'connected' });
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -83,7 +90,6 @@ function createSseChannel(options) {
         for (const frame of frames) {
           const parsed = parseFrame(frame);
           if (!parsed) continue;
-          if (parsed.id) lastEventId = parsed.id;
           if (parsed.data) {
             let envelope;
             try {
@@ -100,6 +106,8 @@ function createSseChannel(options) {
       }
       onStatus({ state: 'closed' });
     } catch (err) {
+      clearTimeout(readyTimer);
+      rejectReady(err);
       if (stopped || err.name === 'AbortError') return;
       onStatus({ state: 'error', error: err });
     }
@@ -117,10 +125,14 @@ function createSseChannel(options) {
       if (controller) return;
       stopped = false;
       controller = new AbortController();
+      readyTimer = setTimeout(() => rejectReady(new Error('SSE connection timed out')), options.timeoutMs ?? 10000);
       pump();
     },
+    ready() { return ready; },
     stop() {
       stopped = true;
+      clearTimeout(readyTimer);
+      rejectReady(new Error('SSE channel stopped'));
       if (timer) clearTimeout(timer);
       if (controller) controller.abort();
       controller = null;

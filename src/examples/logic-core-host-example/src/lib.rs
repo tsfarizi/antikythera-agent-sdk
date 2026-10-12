@@ -214,19 +214,14 @@ pub fn custom_get_slo(_session_id: &str) -> Option<String> {
     None
 }
 
-// ===========================================================================
-// Host-loop implementation (component build only)
-// ===========================================================================
-//
-// The four active hooks delegate here. Every function re-reads the session
-// state from the HOST at entry (`host_load_state`), transforms it, and
-// re-persists at exit (`host_save_state`): the component holds no session
-// state between runner calls. Host failures return the structured error
-// envelope `{"error":"<detail>","function":"<name>"}` so host code detects
-// them deterministically.
-
 /// Full custom-loop implementation of the four active hooks.
 #[cfg(feature = "component")]
+/// Host-loop implementation (component build only) The four active hooks delegate here. Every
+/// function re-reads the session state from the HOST at entry (`host_load_state`), transforms it,
+/// and re-persists at exit (`host_save_state`): the component holds no session state between
+/// runner calls. Host failures return the structured error envelope
+/// `{"error":"<detail>","function":"<name>"}` so host code detects them deterministically.
+///
 mod host_loop {
     use super::{host_call_llm, host_emit_tool_call, host_load_state, host_log, host_save_state};
 
@@ -296,6 +291,10 @@ mod host_loop {
         Some(session_id)
     }
 
+    /// Re-read the persisted step so the prepared turn reports the current step of the host-side
+    /// session (fresh session → 0). A load failure here defaults to 0; real failures surface in
+    /// the commit hook.
+    ///
     pub fn prepare_turn(request_json: &str) -> Option<String> {
         let request: serde_json::Value = serde_json::from_str(request_json).ok()?;
 
@@ -326,9 +325,6 @@ mod host_loop {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
 
-        // Re-read the persisted step so the prepared turn reports the current
-        // step of the host-side session (fresh session → 0). A load failure
-        // here defaults to 0; real failures surface in the commit hook.
         let step = load_or_fresh(&session_id)
             .map(|state| {
                 state
@@ -360,6 +356,14 @@ mod host_loop {
         Some(prepared.to_string())
     }
 
+    /// Full custom loop: the LLM is reached through the host-imports escape hatch; the
+    /// `llm_response_json` the runner forwards is ignored by design.
+    ///
+    /// Deterministic action derivation: prompt containing "tool" → call the echo tool; anything
+    /// else → final with the LLM content.
+    ///
+    /// Persist: append the assistant message to the host-side session state.
+    ///
     pub fn commit_response(prepared_turn_json: &str) -> Option<String> {
         let prepared: serde_json::Value = serde_json::from_str(prepared_turn_json).ok()?;
 
@@ -381,9 +385,6 @@ mod host_loop {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
-        // Full custom loop: the LLM is reached through the host-imports
-        // escape hatch; the `llm_response_json` the runner forwards is
-        // ignored by design.
         let llm_request = serde_json::json!({
             "session_id": session_id,
             "messages_json": messages_json,
@@ -415,8 +416,6 @@ mod host_loop {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
 
-        // Deterministic action derivation: prompt containing "tool" → call the
-        // echo tool; anything else → final with the LLM content.
         let wants_tool = prompt.contains("tool");
         let (action, tool_name, tool_input, fsm_state) = if wants_tool {
             (
@@ -429,7 +428,6 @@ mod host_loop {
             ("final", None, None, "final")
         };
 
-        // Persist: append the assistant message to the host-side session state.
         let state = match load_or_fresh(&session_id) {
             Ok(state) => state,
             Err(e) => {
@@ -490,6 +488,8 @@ mod host_loop {
         )
     }
 
+    /// Ask the host to execute the tool (escape hatch); echo takes no args.
+    ///
     pub fn process_tool_result(session_id: &str, tool_result_json: &str) -> Option<String> {
         let input: serde_json::Value = serde_json::from_str(tool_result_json).ok()?;
 
@@ -513,7 +513,6 @@ mod host_loop {
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as u32;
 
-        // Ask the host to execute the tool (escape hatch); echo takes no args.
         let execution_json = match host_emit_tool_call(&tool_name, "{}", session_id, step) {
             Ok(json) => json,
             Err(e) => {
@@ -590,22 +589,6 @@ mod host_loop {
     }
 }
 
-// ===========================================================================
-// Host-imports plumbing (component build only)
-// ===========================================================================
-//
-// The `host_*` helpers bind the `host-imports` WIT interface
-// (`crate::component::antikythera::agent_sdk::host_imports`): call-llm,
-// save-state, load-state, emit-tool-call, log-message. A host-imports call
-// is the ONLY escape hatch a logic core has to the outside world — the host
-// grants permission by wiring the import; there is no other way out of the
-// component. The helpers are compiled only in the `component` build, so a
-// native build never references the wit-bindgen import shims (which abort
-// via `unreachable!()` on non-wasm targets).
-//
-// JSON keys follow the generated Rust field names (snake_case), matching the
-// JSON-string convention used across the runner surface.
-
 /// Call the host LLM service (`host-imports.call-llm`).
 ///
 /// `request_json` mirrors the WIT `llm-request` record with snake_case keys:
@@ -614,6 +597,15 @@ mod host_loop {
 /// `schema_name`, `metadata_json`. Returns the `llm-response` record
 /// serialized to JSON (snake_case keys).
 #[cfg(feature = "component")]
+/// Host-imports plumbing (component build only) The `host_*` helpers bind the `host-imports` WIT
+/// interface (`crate::component::antikythera::agent_sdk::host_imports`): call-llm, save-state,
+/// load-state, emit-tool-call, log-message. A host-imports call is the ONLY escape hatch a logic
+/// core has to the outside world — the host grants permission by wiring the import; there is no
+/// other way out of the component. The helpers are compiled only in the `component` build, so a
+/// native build never references the wit-bindgen import shims (which abort via `unreachable!()`
+/// on non-wasm targets). JSON keys follow the generated Rust field names (snake_case), matching
+/// the JSON-string convention used across the runner surface.
+///
 pub fn host_call_llm(request_json: &str) -> Result<String, String> {
     use crate::component::antikythera::agent_sdk::host_imports::call_llm;
     use crate::component::antikythera::agent_sdk::vocabulary::LlmRequest;
@@ -696,6 +688,8 @@ pub fn host_load_state(context_id: &str) -> Result<Option<String>, String> {
 /// Returns the `tool-execution-result` record serialized to JSON
 /// (`tool_name`, `success`, `output_json`, `error_message`, `step_id`).
 #[cfg(feature = "component")]
+/// `session-id` is optional in WIT; an empty host string maps to `None`.
+///
 pub fn host_emit_tool_call(
     tool_name: &str,
     arguments_json: &str,
@@ -705,7 +699,6 @@ pub fn host_emit_tool_call(
     use crate::component::antikythera::agent_sdk::host_imports::emit_tool_call;
     use crate::component::antikythera::agent_sdk::vocabulary::ToolCallEvent;
 
-    // `session-id` is optional in WIT; an empty host string maps to `None`.
     let event = ToolCallEvent {
         tool_name: tool_name.to_string(),
         arguments_json: arguments_json.to_string(),

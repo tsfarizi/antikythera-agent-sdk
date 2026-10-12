@@ -3,8 +3,8 @@ package antikythera:agent-sdk@1.0.0;
 /// Shared vocabulary for the host-facing interfaces.
 ///
 /// Records are defined here (canonical WIT requires types to live inside an
-/// interface) and imported by the interfaces that consume them. None of this
-/// vocabulary is wired into the world yet.
+/// interface) and imported by the host-imports and tool-registry interfaces.
+/// JSON strings carry these records across runner boundaries.
 interface vocabulary {
   /// LlmRequest
   record llm-request {

@@ -165,8 +165,6 @@ pub trait MemoryProvider: Send + Sync {
     /// Check if provider is ready
     async fn is_ready(&self) -> bool;
 
-    // === State Operations ===
-
     /// Save agent state
     async fn save_state(&self, state: AgentStateSnapshot) -> Result<(), MemoryError>;
 
@@ -185,15 +183,11 @@ pub trait MemoryProvider: Send + Sync {
     /// Check if state exists
     async fn state_exists(&self, context_id: &ContextId) -> bool;
 
-    // === Context Management ===
-
     /// List all context IDs for an agent
     async fn list_contexts(&self, agent_id: &str) -> Result<Vec<ContextId>, MemoryError>;
 
     /// Clear all contexts for an agent
     async fn clear_agent_contexts(&self, agent_id: &str) -> Result<(), MemoryError>;
-
-    // === Lifecycle ===
 
     /// Shutdown the provider gracefully
     async fn shutdown(&self) -> Result<(), MemoryError>;

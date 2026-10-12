@@ -25,6 +25,12 @@ impl ToolRuntime {
         result
     }
 
+    /// Unknown action: try to extract a response value using the configurable fallback keys.
+    /// Extra fields the model may add are simply ignored — developers can add proper variants to
+    /// AgentDirective when they need to handle a new action type explicitly.
+    ///
+    /// No `action` field: probe the same configurable fallback keys before giving up.
+    ///
     fn parse_action_value(
         &self,
         value: Value,
@@ -61,11 +67,6 @@ impl ToolRuntime {
                             Ok(AgentDirective::Final { response })
                         }
                         other => {
-                            // Unknown action: try to extract a response value using
-                            // the configurable fallback keys.  Extra fields the model
-                            // may add are simply ignored — developers can add proper
-                            // variants to AgentDirective when they need to handle a
-                            // new action type explicitly.
                             let response = self
                                 .fallback_response_keys
                                 .iter()
@@ -79,8 +80,6 @@ impl ToolRuntime {
                         }
                     }
                 } else {
-                    // No `action` field: probe the same configurable fallback keys
-                    // before giving up.
                     let response = self
                         .fallback_response_keys
                         .iter()

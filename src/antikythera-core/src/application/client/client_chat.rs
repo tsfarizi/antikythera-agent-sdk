@@ -10,7 +10,7 @@ impl<P: ModelProvider> McpClient<P> {
     /// Loads session history, optionally applies `bypass_template` or
     /// `raw_mode`, builds the system prompt from the template, and
     /// constructs the outgoing [`ModelRequest`].  The result can be
-    /// inspected or handed to [`complete_chat_from_host`] when the host
+    /// inspected or handed to [`Self::complete_chat`] when the host
     /// owns the LLM API call.
     pub async fn prepare_chat(&self, request: ChatRequest) -> PreparedChatTurn {
         let provider = self.config.default_provider.clone();
@@ -115,7 +115,7 @@ impl<P: ModelProvider> McpClient<P> {
     ///
     /// Both the user message and the model's assistant message are appended to
     /// the in-memory session store under `prepared.session_id` via
-    /// [`persist_exchange`].
+    /// `persist_exchange`.
     pub async fn complete_chat(
         &self,
         prepared: PreparedChatTurn,
@@ -165,7 +165,7 @@ impl<P: ModelProvider> McpClient<P> {
         })
     }
 
-    /// Single-method convenience: [`prepare_chat`] → provider dispatch → [`complete_chat`].
+    /// Single-method convenience: [`Self::prepare_chat`] → provider dispatch → [`Self::complete_chat`].
     pub async fn chat(&self, request: ChatRequest) -> Result<ChatResult, McpError> {
         let prepared = self.prepare_chat(request).await;
 

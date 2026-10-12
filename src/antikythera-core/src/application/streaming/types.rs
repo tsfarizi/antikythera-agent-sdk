@@ -28,7 +28,6 @@ pub enum AgentEvent {
         detail: Option<String>,
     },
     Completed,
-    // ── Phase 2 variants ─────────────────────────────────────────────────────
     /// A streaming chunk of tool-execution output.
     ToolResult {
         tool_name: String,

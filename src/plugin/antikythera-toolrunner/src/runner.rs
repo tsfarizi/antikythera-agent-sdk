@@ -33,10 +33,6 @@ impl ToolRunner {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Registration
-    // ------------------------------------------------------------------
-
     /// Register a tool definition (metadata only, no handler).
     pub fn register_tool(&mut self, tool: ToolDefinition) {
         self.registry.register(tool);
@@ -45,10 +41,11 @@ impl ToolRunner {
     /// Register a builtin tool handler (function pointer).
     ///
     /// If no tool definition exists for this name, a minimal one is created.
+    /// Auto-register a definition if one doesn't exist yet.
+    ///
     pub fn register_handler(&mut self, name: &str, handler: ToolHandlerFn) {
         self.handlers.insert(name.to_string(), Arc::new(handler));
 
-        // Auto-register a definition if one doesn't exist yet.
         if self.registry.get(name).is_none() {
             self.registry.register(ToolDefinition {
                 name: name.to_string(),
@@ -82,10 +79,6 @@ impl ToolRunner {
         Ok(count)
     }
 
-    // ------------------------------------------------------------------
-    // Query
-    // ------------------------------------------------------------------
-
     /// Access the tool registry.
     pub fn registry(&self) -> &ToolRegistry {
         &self.registry
@@ -110,10 +103,6 @@ impl ToolRunner {
         self.registry.to_prompt_block()
     }
 
-    // ------------------------------------------------------------------
-    // Execution
-    // ------------------------------------------------------------------
-
     /// Execute a tool call.
     ///
     /// 1. Validates against registry (if populated).
@@ -124,10 +113,8 @@ impl ToolRunner {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<ToolResult, ToolRunnerError> {
-        // Validate against registry.
         self.registry.validate_call(name, &arguments)?;
 
-        // Dispatch to handler.
         let handler = self
             .handlers
             .get(name)

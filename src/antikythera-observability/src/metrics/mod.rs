@@ -114,10 +114,6 @@ impl antikythera_ports::observability::MetricsExporter for InMemoryMetricsExport
     }
 }
 
-// ---------------------------------------------------------------------------
-// Latency tracking
-// ---------------------------------------------------------------------------
-
 /// SLA latency summary values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatencySummary {

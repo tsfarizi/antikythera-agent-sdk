@@ -7,13 +7,13 @@
  * @packageDocumentation
  */
 
-// ============================================================================
-// Core Types
-// ============================================================================
 
 /**
  * Configuration for creating an Agent instance.
  */
+export { AgentDeployment, createAgentDeployment } from './delivery/index';
+export type { DeploymentConfig, DeploymentEnvironment, ClientExportOptions, DeliveryHostOptions, DeliveryHost, DeliveryManifest, ConfiguredAgentRuntime, DeliveryResult } from './delivery/index';
+
 export interface AgentConfig {
   /** LLM provider identifier (e.g., 'openai', 'anthropic', 'gemini') */
   provider: string;
@@ -147,9 +147,6 @@ export interface PromptConfig {
   tags?: string[];
 }
 
-// ============================================================================
-// PromptManager
-// ============================================================================
 
 /**
  * Centralized prompt management for agents.
@@ -260,9 +257,6 @@ export class PromptManager {
   static fromJSON(json: string): PromptManager;
 }
 
-// ============================================================================
-// SessionManager
-// ============================================================================
 
 /**
  * Session lifecycle management.
@@ -316,9 +310,6 @@ export class SessionManager {
   count(): number;
 }
 
-// ============================================================================
-// Orchestrator
-// ============================================================================
 
 /**
  * Multi-agent orchestrator on top of client-core runtimes.
@@ -360,7 +351,7 @@ export class Orchestrator {
    * @param opts - Options; `sessionId` reuses the runtime owning that session
    * @returns Task result
    */
-  dispatch(task: string, opts?: { sessionId?: string }): Promise<TaskResult>;
+  dispatch(task: string, opts?: { sessionId?: string; agentId?: string }): Promise<TaskResult>;
 
   /**
    * Dispatch many tasks honouring the configured execution mode.
@@ -369,7 +360,7 @@ export class Orchestrator {
    * @param opts - Options forwarded per task (sequential mode)
    * @returns Array of task results
    */
-  dispatchMany(tasks: string[], opts?: { sessionId?: string }): Promise<TaskResult[]>;
+  dispatchMany(tasks: string[], opts?: { sessionId?: string; agentId?: string }): Promise<TaskResult[]>;
 
   /**
    * Run tasks sequentially, feeding each previous output into the next
@@ -403,9 +394,6 @@ export class Orchestrator {
   close(): void;
 }
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
 
 /**
  * Get the SDK version.
@@ -413,9 +401,9 @@ export class Orchestrator {
  */
 export function getVersion(): string;
 
-// ============================================================================
-// Runtime Bridge (U9) — host runtime for the WASM agent core
-// ============================================================================
+/**
+ * Runtime Bridge (U9) — host runtime for the WASM agent core.
+ */
 
 export { createAgentRuntime } from './runtime/index';
 export type {

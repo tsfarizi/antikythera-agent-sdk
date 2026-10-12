@@ -5,7 +5,8 @@ pub use antikythera_tooling::{
     validate_tool_result_envelope,
 };
 
-// Submodule re-exports preserved for backward compatibility.
+/// Submodule re-exports preserved for backward compatibility.
+///
 pub use antikythera_tooling::error;
 pub use antikythera_tooling::interface;
 pub use antikythera_tooling::manager;

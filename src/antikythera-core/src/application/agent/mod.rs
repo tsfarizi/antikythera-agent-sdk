@@ -32,8 +32,9 @@ mod runner;
 mod runtime;
 mod tool_result_parser;
 
-// Multi-agent is only available on native targets (requires Send futures)
 #[cfg(not(target_arch = "wasm32"))]
+/// Multi-agent is only available on native targets (requires Send futures).
+///
 pub mod multi_agent;
 
 pub use context::{ServerGuidance, ToolContext, ToolDescriptor};

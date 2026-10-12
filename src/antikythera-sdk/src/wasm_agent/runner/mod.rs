@@ -14,14 +14,16 @@ mod context_manager;
 mod llm_stream;
 #[cfg(all(feature = "component", target_family = "wasm"))]
 mod logic_hooks;
-// No cfg gate on this module: it holds the pure classification/merge/
-// precedence functions compiled and unit-tested on native; only its
-// shim-calling wrappers are gated on the component+wasm cfg.
+/// No cfg gate on this module: it holds the pure classification/merge/ precedence functions
+/// compiled and unit-tested on native; only its shim-calling wrappers are gated on the
+/// component+wasm cfg.
+///
 mod runner_telemetry;
 mod runner_types;
 mod runtime_hooks;
 mod session_lifecycle;
 #[cfg(test)]
+#[path = "../../../../../tests/rust/unit/antikythera-sdk/wasm_agent/runner/tests.rs"]
 mod tests;
 mod tool_pipeline;
 use runner_types::*;

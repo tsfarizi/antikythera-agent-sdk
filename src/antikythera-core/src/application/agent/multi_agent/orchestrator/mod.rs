@@ -72,13 +72,16 @@ struct DispatchPrepared {
 /// This is a free function (not a method) so it can be used both by
 /// [`MultiAgentOrchestrator::dispatch`] and inside the async closures
 /// passed to the task scheduler in [`MultiAgentOrchestrator::dispatch_many`].
+/// 1. Default retry policy — applied only when the task does not define its own.
+///
+/// 4. Concurrency slot (optional semaphore).
+///
 async fn prepare_dispatch(
     mut task: AgentTask,
     budget: &OrchestratorBudget,
     default_retry_condition: &RetryCondition,
     concurrency_sem: &Option<Arc<Semaphore>>,
 ) -> Result<DispatchPrepared, TaskResult> {
-    // 1. Default retry policy — applied only when the task does not define its own.
     if task.retry_policy.is_none() {
         task.retry_policy = Some(TaskRetryPolicy {
             max_retries: 0,
@@ -87,7 +90,6 @@ async fn prepare_dispatch(
         });
     }
 
-    // 2. Task budget guard.
     let dispatch_count = budget.record_task_dispatch();
     if budget.is_task_budget_exhausted() {
         let meta = TaskExecutionMetadata {
@@ -108,7 +110,6 @@ async fn prepare_dispatch(
         .with_metadata(meta));
     }
 
-    // 3. Step budget guard.
     if budget.is_step_budget_exhausted() {
         let meta = TaskExecutionMetadata {
             budget_exhausted: true,
@@ -129,7 +130,6 @@ async fn prepare_dispatch(
         .with_metadata(meta));
     }
 
-    // 4. Concurrency slot (optional semaphore).
     let concurrency_wait_start = Instant::now();
     let _permit = if let Some(sem) = concurrency_sem {
         Some(
@@ -202,10 +202,6 @@ pub struct MultiAgentOrchestrator<P: ModelProvider> {
 }
 
 impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
-    // ----------------------------------------------------------------
-    // Constructors
-    // ----------------------------------------------------------------
-
     /// Create a new orchestrator with an explicit execution mode.
     pub fn new(client: Arc<McpClient<P>>, mode: ExecutionMode) -> Self {
         Self {
@@ -227,10 +223,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
     pub fn with_auto_mode(client: Arc<McpClient<P>>) -> Self {
         Self::new(client, ExecutionMode::Auto)
     }
-
-    // ----------------------------------------------------------------
-    // Builder methods
-    // ----------------------------------------------------------------
 
     /// Register an agent profile.
     ///
@@ -296,10 +288,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
         self
     }
 
-    // ----------------------------------------------------------------
-    // Inspection
-    // ----------------------------------------------------------------
-
     /// Return a reference to the session manager.
     pub fn sessions(&self) -> &OrchestratorSessionManager {
         &self.session_manager
@@ -324,10 +312,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
     pub fn guardrail_count(&self) -> usize {
         self.guardrails.len()
     }
-
-    // ----------------------------------------------------------------
-    // Cancellation
-    // ----------------------------------------------------------------
 
     /// Signal all running (and future) tasks to stop.
     ///
@@ -355,14 +339,14 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
         self.cancel_token.child_token()
     }
 
-    // ----------------------------------------------------------------
-    // Dispatch
-    // ----------------------------------------------------------------
-
     /// Dispatch a single task and wait for the result.
     ///
     /// The router is called to resolve the target agent.  If the router
     /// returns `None` a [`TaskResult::failure`] is returned immediately.
+    /// Track session if the task declares one.
+    ///
+    /// Record message exchange for the session.
+    ///
     pub async fn dispatch(&self, task: AgentTask) -> TaskResult {
         let prepared = match prepare_dispatch(
             task,
@@ -377,7 +361,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
         };
         let task = prepared.task;
 
-        // ---- routing -------------------------------------------------------
         let profiles: Vec<&AgentProfile> = self.registry.list_profiles();
         let candidates = profiles.len();
         let profile = match self.router.route(&task, &profiles) {
@@ -407,7 +390,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
             self.router.name()
         ));
 
-        // Track session if the task declares one.
         if let Some(ref sid) = task.session_id {
             let _ = self.session_manager.get_or_create(sid, &profile.id);
         }
@@ -427,7 +409,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
         )
         .await;
 
-        // Record message exchange for the session.
         if !result.session_id.is_empty() {
             self.session_manager.record_message(&result.session_id);
         }
@@ -437,7 +418,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
             result.task_id, result.agent_id, result.success, result.steps_used
         ));
 
-        // ---- record steps consumed -----------------------------------------
         self.budget.record_steps(result.steps_used);
 
         result
@@ -451,13 +431,14 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
     ///
     /// Results are returned in an unspecified order for `Auto` and `Parallel`
     /// modes, and in submission order for `Sequential` and `Concurrent` modes.
+    /// Resolve routing for all tasks before entering the scheduler.
+    ///
     pub async fn dispatch_many(&self, tasks: Vec<AgentTask>) -> Vec<TaskResult> {
         if tasks.is_empty() {
             self.log.debug("dispatch_many called with empty task list");
             return Vec::new();
         }
 
-        // Resolve routing for all tasks before entering the scheduler
         let profiles: Vec<&AgentProfile> = self.registry.list_profiles();
         let candidates = profiles.len();
         let execution_mode = self.execution_mode().to_string();
@@ -563,6 +544,8 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
     ///
     /// The pipeline short-circuits on the first failure: remaining tasks are
     /// not executed and the partial results are returned.
+    /// Inject the previous step's output as leading context.
+    ///
     pub async fn pipeline(&self, tasks: Vec<AgentTask>) -> PipelineResult {
         if tasks.is_empty() {
             self.log.debug("pipeline called with empty task list");
@@ -573,7 +556,6 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
         let mut previous_output: Option<String> = None;
 
         for mut task in tasks {
-            // Inject the previous step's output as leading context
             if let Some(prev) = previous_output.take() {
                 task.input = format!(
                     "Previous step output:\n{prev}\n\n---\nCurrent task:\n{}",
@@ -608,104 +590,5 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::application::agent::multi_agent::budget::OrchestratorBudget;
-    use crate::application::agent::multi_agent::task::AgentTask;
-
-    /// Regression test: `dispatch_many` must reject tasks when the step budget
-    /// is exhausted.  Before the fix, only the task-budget guard was checked in
-    /// `dispatch_many`; the step-budget guard was missing.
-    #[tokio::test]
-    async fn dispatch_many_rejects_when_step_budget_exhausted() {
-        let budget = OrchestratorBudget::new().with_max_total_steps(5);
-        // Consume all steps.
-        budget.record_steps(5);
-        assert!(budget.is_step_budget_exhausted());
-
-        let sem: Option<Arc<Semaphore>> = None;
-        let default_retry = RetryCondition::Always;
-        let task = AgentTask::new("should be rejected");
-
-        let result = prepare_dispatch(task, &budget, &default_retry, &sem).await;
-        assert!(result.is_err(), "expected step-budget rejection");
-
-        let err = result.unwrap_err();
-        assert!(!err.success);
-        assert_eq!(err.error_kind, Some(ErrorKind::BudgetExhausted));
-        assert!(err.metadata.budget_exhausted);
-        let err_msg = err.error.unwrap();
-        assert!(
-            err_msg.contains("step budget exhausted"),
-            "error should mention step budget, got: {err_msg}"
-        );
-    }
-
-    #[tokio::test]
-    async fn prepare_dispatch_rejects_when_task_budget_exhausted() {
-        let budget = OrchestratorBudget::new().with_max_total_tasks(1);
-        // Dispatch the one allowed task.
-        budget.record_task_dispatch();
-        assert!(budget.is_task_budget_exhausted());
-
-        let sem: Option<Arc<Semaphore>> = None;
-        let default_retry = RetryCondition::Always;
-        let task = AgentTask::new("should be rejected");
-
-        let result = prepare_dispatch(task, &budget, &default_retry, &sem).await;
-        assert!(result.is_err(), "expected task-budget rejection");
-
-        let err = result.unwrap_err();
-        assert!(!err.success);
-        assert_eq!(err.error_kind, Some(ErrorKind::BudgetExhausted));
-    }
-
-    #[tokio::test]
-    async fn prepare_dispatch_sets_default_retry_policy() {
-        let budget = OrchestratorBudget::new();
-        let sem: Option<Arc<Semaphore>> = None;
-        let default_retry = RetryCondition::OnTransient;
-        let task = AgentTask::new("test");
-
-        let result = prepare_dispatch(task, &budget, &default_retry, &sem)
-            .await
-            .unwrap();
-
-        let policy = result.task.retry_policy.unwrap();
-        assert_eq!(policy.condition, RetryCondition::OnTransient);
-        assert_eq!(policy.max_retries, 0);
-        assert_eq!(policy.backoff_ms, 0);
-    }
-
-    #[tokio::test]
-    async fn prepare_dispatch_preserves_existing_retry_policy() {
-        let budget = OrchestratorBudget::new();
-        let sem: Option<Arc<Semaphore>> = None;
-        let default_retry = RetryCondition::Never;
-        let task = AgentTask::new("test").with_retry_policy(TaskRetryPolicy {
-            max_retries: 3,
-            backoff_ms: 100,
-            condition: RetryCondition::Always,
-        });
-
-        let result = prepare_dispatch(task, &budget, &default_retry, &sem)
-            .await
-            .unwrap();
-
-        let policy = result.task.retry_policy.unwrap();
-        assert_eq!(policy.max_retries, 3);
-        assert_eq!(policy.backoff_ms, 100);
-        assert_eq!(policy.condition, RetryCondition::Always);
-    }
-
-    #[tokio::test]
-    async fn prepare_dispatch_succeeds_when_budget_available() {
-        let budget = OrchestratorBudget::new().with_max_total_steps(10);
-        let sem: Option<Arc<Semaphore>> = None;
-        let default_retry = RetryCondition::Always;
-        let task = AgentTask::new("should succeed");
-
-        let result = prepare_dispatch(task, &budget, &default_retry, &sem).await;
-        assert!(result.is_ok(), "expected dispatch to succeed");
-    }
-}
+#[path = "../../../../../../../tests/rust/unit/antikythera-core/application/agent/multi_agent/orchestrator/mod.tests.rs"]
+mod tests;

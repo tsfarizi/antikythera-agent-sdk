@@ -32,7 +32,6 @@ def main() -> int:
         errors += scan_file(p)
     for p in npm_root.rglob("*.d.ts"):
         errors += scan_file(p)
-    # Also scan documentation
     doc_root = ROOT.parent.parent / "documentation"
     for p in doc_root.rglob("*.md"):
         errors += scan_file(p)

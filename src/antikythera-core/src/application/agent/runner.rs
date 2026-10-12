@@ -44,6 +44,20 @@ impl<P: ModelProvider> Agent<P> {
         self
     }
 
+    /// Rate limit check before making LLM calls.
+    ///
+    /// Log the prompt being sent for IO trace.
+    ///
+    /// Agent composes its own complete system prompt.
+    ///
+    /// Rate limit check before each LLM call.
+    ///
+    /// Log the LLM response for IO trace.
+    ///
+    /// Parses agent action with retry logic for malformed JSON.
+    ///
+    /// Use configurable tool result instruction Use configurable tool result instruction.
+    ///
     pub async fn run(
         &self,
         prompt: String,
@@ -57,7 +71,6 @@ impl<P: ModelProvider> Agent<P> {
         );
         let log = AgentLogger::from_context(&ctx);
         log.info("Agent run started");
-        // Rate limit check before making LLM calls
         if let Some(ref limiter) = self.rate_limiter {
             let sid = options.session_id.as_deref().unwrap_or("default");
             limiter
@@ -134,7 +147,6 @@ impl<P: ModelProvider> Agent<P> {
                 session_id.as_deref(),
                 remaining_steps
             ));
-            // Log the prompt being sent for IO trace
             let prompt_preview = McpClient::<P>::summarise(&next_prompt);
             log.info(format!(
                 "-> Agent REQ | chars={} | {}",
@@ -155,11 +167,10 @@ impl<P: ModelProvider> Agent<P> {
                 },
                 session_id: session_id.clone(),
                 raw_mode: false,
-                bypass_template: true, // Agent composes its own complete system prompt
+                bypass_template: true,
                 force_json: true,
             };
 
-            // Rate limit check before each LLM call
             if let Some(ref limiter) = self.rate_limiter {
                 let sid = session_id.as_deref().unwrap_or("default");
                 limiter
@@ -179,7 +190,6 @@ impl<P: ModelProvider> Agent<P> {
                 });
             }
 
-            // Log the LLM response for IO trace
             let response_preview = McpClient::<P>::summarise(&result.content);
             log.info(format!(
                 "<- Agent RES | chars={} | {}",
@@ -187,7 +197,6 @@ impl<P: ModelProvider> Agent<P> {
                 response_preview
             ));
 
-            // Parse agent action with retry logic for malformed JSON
             let directive = self
                 .runtime
                 .parse_with_retry(&result.content, &self.client, &mut logs, &session_id)
@@ -260,8 +269,6 @@ impl<P: ModelProvider> Agent<P> {
                         });
                     }
 
-                    // Use configurable tool result instruction
-                    // Use configurable tool result instruction
                     let tool_result_instruction = self.client.prompts().tool_result_instruction();
                     next_prompt = ToolResultParser::format_single(
                         execution.tool,
@@ -353,24 +360,23 @@ impl<P: ModelProvider> Agent<P> {
         }
     }
 
-    /// Run agent and return response with embedded tool results.
+    /// Run the agent and replace response references with their tool result data.
+    ///
+    /// Returns the original execution outcome together with the processed response.
+    /// Plain string responses are wrapped in a JSON object with a `content` field
+    /// so callers receive the same object shape as structured model responses.
     pub async fn run_ui_layout(
         &self,
         prompt: String,
         options: AgentOptions,
     ) -> Result<(AgentOutcome, serde_json::Value), AgentError> {
-        // 1. Run the agent loop
         let outcome = self.run(prompt, options).await?;
 
-        // 2. Process the response to embed tool results by replacing IDs with actual data
         let processed_response =
             ResponseEmbedder::embed_tool_results_sync(outcome.response.clone(), &outcome.steps);
 
-        // 3. If the processed response is a string (meaning the LLM didn't follow JSON format),
-        // wrap it in a proper structure with content field
         let final_response = match processed_response {
             Value::String(s) => {
-                // If the LLM returned a plain string, wrap it in a content field
                 json!({"content": s})
             }
             _ => processed_response,

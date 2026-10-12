@@ -46,7 +46,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from antikythera_agent import host
 from antikythera_agent.server import wire
 from antikythera_agent.server.provider import resolve_provider
 
@@ -110,9 +109,7 @@ class ToolLoopConfig:
             or self.max_steps < 0
         ):
             raise ValueError("tool loop: max_steps must be a non-negative integer")
-        if not isinstance(self.prompts, list) or not all(
-            isinstance(p, str) for p in self.prompts
-        ):
+        if not isinstance(self.prompts, list) or not all(isinstance(p, str) for p in self.prompts):
             raise ValueError("tool loop: prompts must be a list of strings")
         if not isinstance(self.provider, str) or not self.provider:
             raise ValueError("tool loop: provider must be a non-empty string")
@@ -122,8 +119,7 @@ class ToolLoopConfig:
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"tool loop: {name} must be a bool")
         if self.temperature is not None and (
-            not isinstance(self.temperature, (int, float))
-            or isinstance(self.temperature, bool)
+            not isinstance(self.temperature, (int, float)) or isinstance(self.temperature, bool)
         ):
             raise ValueError("tool loop: temperature must be a number or None")
         if self.max_tokens is not None and (
@@ -153,9 +149,7 @@ class LoopOutcome:
     commit_json: Any
 
 
-def _execute_local(
-    registry: Any, tool: str, tool_input: Any, step_id: int
-) -> Dict[str, Any]:
+def _execute_local(registry: Any, tool: str, tool_input: Any, step_id: int) -> Dict[str, Any]:
     """Eksekusi tool owner `server`: handler lokal; kegagalan handler adalah
     hasil `success=false`, bukan error (mirror `routing.rs::execute_local`).
 
@@ -204,7 +198,12 @@ def _execute_remote(
 ) -> Dict[str, Any]:
     """Eksekusi tool owner `client`: `tool-execution-request` SSE + POST-back
     (mirror `routing.rs::execute_remote`). Fail-closed: client tidak terhubung
-    atau timeout POST-back → error `permission:`."""
+    atau timeout POST-back → error `permission:`.
+
+
+    `tool_input` None dinormalisasi ke {} agar arguments-json wire tetap object (golden
+    `tool_execute_request.arguments-json`).
+    """
     if control is None:
         raise ToolLoopError(f"permission: tool '{tool}' requires a connected client")
     correlation_id = control.create_correlation(config.client_id, config.pending_ttl_secs)
@@ -219,8 +218,6 @@ def _execute_remote(
         "payload": wire.build_tool_call_event(
             {
                 "tool_name": tool,
-                # `tool_input` None dinormalisasi ke {} agar arguments-json wire
-                # tetap object (golden `tool_execute_request.arguments-json`).
                 "arguments_json": json.dumps(tool_input if tool_input is not None else {}),
                 "session_id": session_id,
                 "step_id": step_id,
@@ -250,18 +247,22 @@ def _execute_tool(
 ) -> Dict[str, Any]:
     """Routing satu tool non-in-band (mirror `routing.rs::ToolRouter::execute`):
     resolusi owner → gate check per destination → dispatch. Mengembalikan
-    shape wire `tool-execution-result` (kebab-case)."""
+    shape wire `tool-execution-result` (kebab-case).
+
+
+    Gate check SEBELUM dispatch untuk semua destination (default-deny R4).
+
+    Owner mcp: transport MCP belum ada di paket Python; gagal eksplisit, bukan degradasi
+    senyap (amplop unit: routing mcp = program error).
+    """
     owner = registry.owner_of(tool)
     if owner is None:
         raise ToolLoopError(f"permission: tool '{tool}' not in allowlist")
-    # Gate check SEBELUM dispatch untuk semua destination (default-deny R4).
     gate.check_tool(owner, tool)
-    if owner == wire.WIRE["OWNER_SERVER"]:
+    if owner in (wire.WIRE["OWNER_SERVER"], wire.WIRE["OWNER_MCP"]):
         return _execute_local(registry, tool, tool_input, step_id)
     if owner == wire.WIRE["OWNER_CLIENT"]:
         return _execute_remote(control, config, tool, tool_input, session_id, step_id)
-    # Owner mcp: transport MCP belum ada di paket Python; gagal eksplisit,
-    # bukan degradasi senyap (amplop unit: routing mcp = program error).
     raise ToolLoopError(f"tool '{tool}' has no MCP transport in the Python server runtime")
 
 
@@ -309,9 +310,7 @@ class _RemoteHookProvider:
         self._gate.check_hook(hook)
         if self._control is None:
             raise ToolLoopError(f"permission: hook '{hook}' requires a connected client")
-        correlation_id = self._control.create_correlation(
-            self._client_id, self._pending_ttl_secs
-        )
+        correlation_id = self._control.create_correlation(self._client_id, self._pending_ttl_secs)
         if not self._control.is_client_connected(self._client_id):
             self._control.cancel_pending(correlation_id)
             raise ToolLoopError(f"permission: hook '{hook}' requires a connected client")
@@ -335,9 +334,7 @@ class _RemoteHookProvider:
         if isinstance(payload, str):
             return payload
         if payload is None:
-            raise ToolLoopError(
-                f"permission: hook '{hook}' response payload is not a decision"
-            )
+            raise ToolLoopError(f"permission: hook '{hook}' response payload is not a decision")
         return json.dumps(payload)
 
 
@@ -368,11 +365,13 @@ def run_tool_loop(
         PermissionDeniedError: denial gate (`permission:` prefix).
         PendingTimeoutError: POST-back timeout (`permission:` prefix).
         WasmRuntimeError: kegagalan panggilan runner.
+
+
+    Builtin in-band: komposit sudah mengeksekusi tool di dalam commit dan mengemisi
+    tool_result ke drain — tanpa host execution, tanpa double execution (invariant U23).
     """
     if provider is not None and not callable(provider):
-        raise TypeError(
-            "tool loop: provider must be a callable resolver (name) -> LlmProvider"
-        )
+        raise TypeError("tool loop: provider must be a callable resolver (name) -> LlmProvider")
     resolver = resolve_provider if provider is None else provider
 
     config_json = json.dumps(
@@ -390,12 +389,12 @@ def run_tool_loop(
         runtime.call("register_tools", union_json)
 
     hook_provider = None
-    previous_host_provider = host.get_provider()
+    previous_host_provider = getattr(runtime, "hooks_provider", None)
     if config.runtime_hooks_enabled:
         hook_provider = _RemoteHookProvider(
             gate, control, config.client_id, session_id, config.pending_ttl_secs
         )
-        host.set_provider(hook_provider)
+        runtime.hooks_provider = hook_provider
     try:
         step = 0
         while True:
@@ -430,6 +429,7 @@ def run_tool_loop(
                     "max_tokens": config.max_tokens,
                 }
             )
+            gate.check_llm(session_id)
             try:
                 llm_response = resolver(config.provider).call(llm_request)
             except Exception as exc:
@@ -461,12 +461,7 @@ def run_tool_loop(
                 tool_input = commit_json.get("tool_input")
                 step_id = commit_json.get("step") or 0
 
-                events = _parse_json(
-                    runtime.call("drain_events", session_id), "drained events"
-                )
-                # Builtin in-band: komposit sudah mengeksekusi tool di dalam
-                # commit dan mengemisi tool_result ke drain — tanpa host
-                # execution, tanpa double execution (invariant U23).
+                events = _parse_json(runtime.call("drain_events", session_id), "drained events")
                 in_band = isinstance(events, list) and any(
                     isinstance(event, dict)
                     and event.get("kind") == "tool_result"
@@ -486,9 +481,7 @@ def run_tool_loop(
                         step_id,
                     )
                     correlation_id = commit_json.get("correlation_id")
-                    runner_input = wire.wire_to_runner_tool_result(
-                        wire_result, correlation_id
-                    )
+                    runner_input = wire.wire_to_runner_tool_result(wire_result, correlation_id)
                     runtime.call(
                         "process_tool_result_for_session",
                         json.dumps([session_id, json.dumps(runner_input)]),
@@ -500,4 +493,4 @@ def run_tool_loop(
             step += 1
     finally:
         if hook_provider is not None:
-            host.set_provider(previous_host_provider)
+            runtime.hooks_provider = previous_host_provider

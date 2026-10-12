@@ -25,10 +25,6 @@ use std::sync::{
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// CancellationToken
-// ============================================================================
-
 /// A cloneable cancellation signal.
 ///
 /// All tokens created via [`child_token`] share the same underlying flag, so
@@ -66,15 +62,13 @@ impl CancellationToken {
     }
 }
 
-// ============================================================================
-// CancellationHandle (serialisable snapshot for introspection)
-// ============================================================================
-
 /// A serialisable snapshot of the cancellation state, suitable for embedding
 /// in [`TaskExecutionMetadata`].
 ///
 /// [`TaskExecutionMetadata`]: super::task::TaskExecutionMetadata
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// CancellationHandle (serialisable snapshot for introspection).
+///
 pub struct CancellationSnapshot {
     /// Whether the task was cancelled externally before or during execution.
     pub was_cancelled: bool,

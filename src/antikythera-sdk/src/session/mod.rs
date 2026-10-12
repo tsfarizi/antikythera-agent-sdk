@@ -3,19 +3,19 @@
 //! Wraps antikythera-session for SDK usage.
 //! Integrates with antikythera-log for session-specific logging.
 
-// Re-export session types from antikythera-session
+/// Re-export session types from antikythera-session.
+///
 pub use antikythera_session::{
     BatchExport, Message, MessagePart, MessageRole, Session, SessionExport, SessionSummary,
 };
 
-// Session log export types from antikythera-log
+/// Session log export types from antikythera-log.
+///
 pub use antikythera_log::{BatchLogExport, SessionLogExport};
 
-// ============================================================================
-// From conversions: AgentState/AgentMessage -> Session/Message
-// ============================================================================
-
 #[cfg(feature = "component")]
+/// From conversions: AgentState/AgentMessage -> Session/Message.
+///
 impl From<crate::AgentState> for Session {
     fn from(agent: crate::AgentState) -> Self {
         Session {

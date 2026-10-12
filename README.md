@@ -2,6 +2,11 @@
 
 Antikythera Agent SDK is a Rust workspace for building MCP-capable agent runtimes, host-integrated orchestration flows, and portable WASM agent components.
 
+Runtime consistency, Component Model ownership, client setup, and validation
+are documented in [Runtime consistency](documentation/RUNTIME_CONSISTENCY.md).
+The client uses a per-instance jco factory; Python embeds the same composite
+WASM used to generate the client factory.
+
 ## Packages
 
 | Platform | Package | Link |

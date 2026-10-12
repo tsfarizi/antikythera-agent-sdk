@@ -6,6 +6,17 @@ use super::{ServerGuidance, ToolContext, ToolDescriptor, ToolRuntime};
 use crate::domain::sanitize::sanitize_for_toml;
 
 impl ToolRuntime {
+    /// Sanitize remote description to ensure TOML compatibility.
+    ///
+    /// Merges remote and local descriptions.
+    ///
+    /// Simple keyword matching: count occurrences of words from tool name/description in the
+    /// input.
+    ///
+    /// Base score to ensure some generic tools might stay if tie.
+    ///
+    /// Dynamic pruning: Keep top 5 or tools with score > 0.
+    ///
     pub async fn build_context(&self, input: Option<&str>, ctx: &SessionContext) -> ToolContext {
         let log = AgentLogger::from_context(ctx);
         let start_time = Instant::now();
@@ -51,7 +62,6 @@ impl ToolRuntime {
                 descriptor.annotations = metadata.annotations;
                 descriptor.execution = metadata.execution;
                 if let Some(remote_desc) = metadata.description {
-                    // Sanitize remote description to ensure TOML compatibility
                     let sanitized_desc = sanitize_for_toml(&remote_desc);
 
                     descriptor.description = match descriptor.description {
@@ -62,7 +72,6 @@ impl ToolRuntime {
                             Some(sanitized_desc)
                         }
                         Some(existing) => {
-                            // Merge remote and local descriptions
                             Some(format!("{} {}", sanitized_desc.trim(), existing.trim()))
                         }
                         None => Some(sanitized_desc),
@@ -74,10 +83,8 @@ impl ToolRuntime {
             context.tools.push(descriptor);
         }
 
-        // --- JIT Context Injection & Dynamic Pruning ---
         if let Some(user_input) = input {
             let input_lower = user_input.to_lowercase();
-            // Simple keyword matching: count occurrences of words from tool name/description in the input
             let mut scores: HashMap<usize, usize> = HashMap::new();
             for (idx, tool) in context.tools.iter().enumerate() {
                 let mut score = 0;
@@ -96,15 +103,12 @@ impl ToolRuntime {
                         }
                     }
                 }
-                // Base score to ensure some generic tools might stay if tie
                 scores.insert(idx, score);
             }
 
-            // Sort by score descending
             let mut indices: Vec<usize> = (0..context.tools.len()).collect();
             indices.sort_by_key(|&idx| std::cmp::Reverse(scores.get(&idx).copied().unwrap_or(0)));
 
-            // Dynamic pruning: Keep top 5 or tools with score > 0
             let max_tools = 5;
             let mut pruned_tools = Vec::new();
             for (i, &idx) in indices.iter().enumerate() {

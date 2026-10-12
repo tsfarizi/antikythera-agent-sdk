@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Literal, Optional
 
@@ -71,7 +72,7 @@ def _classify_loop_error(
     sebagai fallback untuk varian `ToolLoopError` tanpa cause bertipe
     (denial routing, max_steps, retry). Return `None` bila tak ada baris tabel
     yang cocok — jenis baru tidak boleh direka (R7).
-     """
+    """
     current: Optional[BaseException] = exc
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
@@ -134,6 +135,10 @@ class Orchestrator:
             runtime_factory: Optional callable producing a fresh `WasmRuntime`
                 (used per isolated worker in `dispatch_many`); defaults to
                 constructing `WasmRuntime()` directly.
+
+
+        Guard state bersama lintas worker: peta sesi -> runtime dan dua penghitung budget
+        di-update atomik di bawah satu kunci.
         """
         self._config = OrchestratorConfig(
             execution_mode=execution_mode,  # type: ignore
@@ -146,12 +151,14 @@ class Orchestrator:
         self._runtime_factory = runtime_factory
         self._runtime = self._make_runtime()
         self._pending_tools: list[tuple[Any, bool]] = []
-        # Guard state bersama lintas worker: peta sesi -> runtime dan dua
-        # penghitung budget di-update atomik di bawah satu kunci.
         self._lock = threading.Lock()
         self._session_runtimes: dict[str, WasmRuntime] = {}
         self._consumed_steps = 0
         self._dispatched_tasks = 0
+        self._reserved_steps = 0
+        self._inflight_tasks = 0
+        self._active_cancellations: dict[str, threading.Event] = {}
+        self._active_sessions: set[str] = set()
 
     @classmethod
     def from_config(cls, config: OrchestratorConfig) -> Orchestrator:
@@ -177,9 +184,14 @@ class Orchestrator:
             return self._runtime_factory()
         return WasmRuntime()
 
-    def _active_profile(self) -> Optional[AgentProfileConfig]:
+    def _active_profile(self, agent_id: Optional[str] = None) -> Optional[AgentProfileConfig]:
         """Profil agen pelaksana: registrasi pertama (urutan registrasi =
         prioritas routing), atau None bila belum ada profil."""
+        if agent_id is not None:
+            for profile in self._agents:
+                if profile.id == agent_id:
+                    return profile
+            raise ValueError(f"unknown agent: {agent_id}")
         return self._agents[0] if self._agents else None
 
     def register_agent(self, profile: AgentProfileConfig) -> None:
@@ -193,6 +205,14 @@ class Orchestrator:
         """
         if not profile.id or not profile.name or not profile.role:
             raise ValueError("Agent profile requires id, name, and role")
+        if any(agent.id == profile.id for agent in self._agents):
+            raise ValueError("duplicate agent id")
+        if (
+            not isinstance(profile.max_steps, int)
+            or isinstance(profile.max_steps, bool)
+            or profile.max_steps < 1
+        ):
+            raise ValueError("agent max_steps must be a positive integer")
         self._agents.append(
             AgentProfileConfig(
                 id=profile.id,
@@ -237,16 +257,55 @@ class Orchestrator:
         return registry, gate
 
     def _execute_on_runtime(
-        self, task: str, session_id: Optional[str], runtime: WasmRuntime
+        self,
+        task: str,
+        session_id: Optional[str],
+        runtime: WasmRuntime,
+        agent_id: Optional[str] = None,
     ) -> TaskResult:
         """Jalankan satu task pada `runtime` tertentu dan petakan hasil/error
         loop ke `TaskResult`; snapshot budget di-update atomik tiap hasil."""
-        profile = self._active_profile()
+        profile = self._active_profile(agent_id)
+        _registry, _gate = self._build_pending_registry_gate()
+        session_id = session_id or str(uuid.uuid4())
+        desired_steps = profile.max_steps if profile is not None else _DEFAULT_MAX_STEPS
+        with self._lock:
+            remaining = (
+                desired_steps
+                if self._config.max_total_steps is None
+                else self._config.max_total_steps - self._consumed_steps - self._reserved_steps
+            )
+            exhausted = (
+                self._config.max_total_tasks is not None
+                and self._dispatched_tasks + self._inflight_tasks >= self._config.max_total_tasks
+            )
+            if exhausted or remaining <= 0 or session_id in self._active_sessions:
+                return TaskResult(
+                    task_id="",
+                    agent_id=profile.id if profile else "",
+                    output=None,
+                    success=False,
+                    steps_used=0,
+                    session_id=session_id,
+                    error="orchestrator: task budget exhausted or session already active",
+                    error_kind="permanent",
+                )
+            reservation = min(desired_steps, remaining)
+            cancellation = threading.Event()
+            self._active_cancellations[session_id] = cancellation
+            self._active_sessions.add(session_id)
+            self._session_runtimes[session_id] = runtime
+            self._inflight_tasks += 1
+            self._reserved_steps += reservation
+        steps_used = 0
+
+        def record_step(step: int) -> None:
+            nonlocal steps_used
+            steps_used = step
+
         loop_config = LocalLoopConfig(
             session_id=session_id or "",
-            max_steps=(
-                profile.max_steps if profile is not None else _DEFAULT_MAX_STEPS
-            ),
+            max_steps=reservation,
             provider=provider.DEFAULT_PROVIDER,
             model="",
             system_prompt=profile.system_prompt if profile is not None else None,
@@ -254,46 +313,58 @@ class Orchestrator:
             prompts=[task],
         )
         started = time.monotonic()
-        _registry, _gate = self._build_pending_registry_gate()
+        result = None
         try:
-            outcome = run_local_loop(runtime, _default_provider_resolver, _registry, _gate, loop_config)
-        except (
-            ToolLoopError,
-            provider.LlmError,
-            WasmRuntimeError,
-            PermissionDeniedError,
-            ValueError,
-        ) as exc:
-            result = TaskResult(
-                task_id="",
-                agent_id=profile.id if profile is not None else "",
-                output=None,
-                success=False,
-                steps_used=0,
-                session_id=session_id or "",
-                error=str(exc),
-                error_kind=_classify_loop_error(exc),
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-        else:
-            result = TaskResult(
-                task_id="",
-                agent_id=profile.id if profile is not None else "",
-                output=outcome.content,
-                success=True,
-                steps_used=outcome.steps,
-                session_id=outcome.session_id,
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-            self._register_session(outcome.session_id, runtime)
-        with self._lock:
-            self._consumed_steps += result.steps_used
-            self._dispatched_tasks += 1
+            try:
+                outcome = run_local_loop(
+                    runtime,
+                    _default_provider_resolver,
+                    _registry,
+                    _gate,
+                    loop_config,
+                    cancel_event=cancellation,
+                    on_step=record_step,
+                )
+            except (
+                ToolLoopError,
+                provider.LlmError,
+                WasmRuntimeError,
+                PermissionDeniedError,
+                ValueError,
+            ) as exc:
+                result = TaskResult(
+                    task_id="",
+                    agent_id=profile.id if profile is not None else "",
+                    output=None,
+                    success=False,
+                    steps_used=steps_used,
+                    session_id=session_id or "",
+                    error=str(exc),
+                    error_kind=_classify_loop_error(exc),
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            else:
+                result = TaskResult(
+                    task_id="",
+                    agent_id=profile.id if profile is not None else "",
+                    output=outcome.content,
+                    success=True,
+                    steps_used=outcome.steps,
+                    session_id=outcome.session_id,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+                self._register_session(outcome.session_id, runtime)
+        finally:
+            with self._lock:
+                self._reserved_steps -= reservation
+                self._inflight_tasks -= 1
+                self._active_sessions.discard(session_id)
+                self._active_cancellations.pop(session_id, None)
+                self._consumed_steps += result.steps_used if result is not None else steps_used
+                self._dispatched_tasks += 1
         return result
 
-    def _dispatch_via_external_backend(
-        self, task: str, session_id: Optional[str]
-    ) -> TaskResult:
+    def _dispatch_via_external_backend(self, task: str, session_id: Optional[str]) -> TaskResult:
         """Jembatan kompatibilitas untuk backend orkestrasi eksternal yang
         dipasangkan langsung pada port `_runtime` (kontrak lama: state JSON
         dari `get_state`). Port berisi objek non-`WasmRuntime` hanya bila
@@ -344,7 +415,9 @@ class Orchestrator:
             duration_ms=result_dict.get("duration_ms", 0),
         )
 
-    def dispatch(self, task: str, session_id: Optional[str] = None) -> TaskResult:
+    def dispatch(
+        self, task: str, session_id: Optional[str] = None, *, agent_id: Optional[str] = None
+    ) -> TaskResult:
         """Dispatch a single task to the best-suited agent.
 
         Runtime di-reuse per sesi (sesi eksplisit dicatat sebelum loop; sesi
@@ -363,7 +436,7 @@ class Orchestrator:
             runtime = self._acquire_session_runtime(session_id)
         else:
             runtime = self._make_runtime()
-        return self._execute_on_runtime(task, session_id, runtime)
+        return self._execute_on_runtime(task, session_id, runtime, agent_id)
 
     def _worker_count_for(self, task_count: int) -> int:
         """Tabel worker E2.3: sequential=1; concurrent/parallel=min(limit, n);
@@ -377,7 +450,11 @@ class Orchestrator:
         return min(limit, task_count)
 
     def dispatch_many(
-        self, tasks: list[str], session_ids: Optional[list[str]] = None
+        self,
+        tasks: list[str],
+        session_ids: Optional[list[str]] = None,
+        *,
+        agent_id: Optional[str] = None,
     ) -> list[TaskResult]:
         """Dispatch multiple tasks.
 
@@ -402,9 +479,7 @@ class Orchestrator:
         else:
             sid_list = list(session_ids)
             if len(sid_list) != len(task_list):
-                raise ValueError(
-                    "dispatch_many: session_ids length must match tasks length"
-                )
+                raise ValueError("dispatch_many: session_ids length must match tasks length")
 
         snapshot = self.get_budget()
         step_exhausted: bool = snapshot["is_step_budget_exhausted"]
@@ -438,16 +513,16 @@ class Orchestrator:
         max_workers = self._worker_count_for(len(task_list))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = [
-                pool.submit(self._execute_isolated, task, sid)
+                pool.submit(self._execute_isolated, task, sid, agent_id)
                 for task, sid in zip(task_list, sid_list)
             ]
             return [future.result() for future in futures]
 
     def _execute_isolated(
-        self, task: str, session_id: Optional[str]
+        self, task: str, session_id: Optional[str], agent_id: Optional[str] = None
     ) -> TaskResult:
         """Satu task pada runtime segar (dipanggil di thread worker)."""
-        return self._execute_on_runtime(task, session_id, self._make_runtime())
+        return self._execute_on_runtime(task, session_id, self._make_runtime(), agent_id)
 
     def pipeline(self, tasks: list[str]) -> PipelineResult:
         """Execute tasks sequentially, chaining outputs.
@@ -513,6 +588,12 @@ class Orchestrator:
                 self._session_runtimes.clear()
         removed_any = False
         for sid, session_runtime in targets:
+            with self._lock:
+                token = self._active_cancellations.get(sid)
+            if token is not None:
+                token.set()
+                removed_any = True
+                continue
             try:
                 raw = session_runtime.call("reset_session", sid)
             except WasmRuntimeError:
@@ -537,12 +618,8 @@ class Orchestrator:
         return {
             "consumed_steps": consumed,
             "dispatched_tasks": dispatched,
-            "is_step_budget_exhausted": (
-                step_limit is not None and consumed >= step_limit
-            ),
-            "is_task_budget_exhausted": (
-                task_limit is not None and dispatched >= task_limit
-            ),
+            "is_step_budget_exhausted": (step_limit is not None and consumed >= step_limit),
+            "is_task_budget_exhausted": (task_limit is not None and dispatched >= task_limit),
         }
 
     def list_agents(self) -> list[AgentProfileConfig]:

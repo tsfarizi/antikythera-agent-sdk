@@ -14,7 +14,7 @@ from .component import ComponentServer
 from .control import ControlChannel, PendingTimeoutError
 from .gate import PermissionDeniedError, PolicyGate
 from .loop_owner import LoopOutcome, ToolLoopConfig, ToolLoopError, run_tool_loop
-from .provider import LlmError, LlmProvider, OllamaProvider, StubProvider
+from .provider import LlmError, LlmProvider, OllamaProvider, OpenAiProvider, StubProvider
 from .registry import UnionRegistry
 from .transport import ThreadingHttpTransport, Transport
 
@@ -27,6 +27,7 @@ __all__ = [
     "LlmProvider",
     "LoopOutcome",
     "OllamaProvider",
+    "OpenAiProvider",
     "PendingTimeoutError",
     "PermissionDeniedError",
     "PolicyGate",

@@ -6,10 +6,6 @@ use crate::session::Session;
 use antikythera_log::SessionLogger;
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Export Format
-// ============================================================================
-
 /// Session export data with versioning for consistency
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionExport {
@@ -58,7 +54,6 @@ impl SessionExport {
             format!("Deserialize error: {}", e)
         })?;
 
-        // Validate version
         if export.version != Self::VERSION {
             SessionLogger::new("export").error(format!(
                 "Unsupported export version: {}. Expected: {}",
@@ -75,10 +70,6 @@ impl SessionExport {
         Ok(export)
     }
 }
-
-// ============================================================================
-// Batch Export/Import
-// ============================================================================
 
 /// Multiple sessions export
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +129,6 @@ impl BatchExport {
             format!("Deserialize error: {}", e)
         })?;
 
-        // Validate version
         if export.version != Self::VERSION {
             SessionLogger::new("export").error(format!(
                 "Unsupported batch export version: {}. Expected: {}",

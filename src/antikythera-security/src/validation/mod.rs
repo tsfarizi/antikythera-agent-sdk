@@ -273,8 +273,6 @@ impl InputValidator {
         Ok(())
     }
 
-    // -- private helpers --
-
     fn validate_urls_in_json(&self, value: &Value) -> ValidationResult {
         match value {
             Value::String(s) if s.starts_with("http://") || s.starts_with("https://") => {
@@ -303,14 +301,9 @@ impl InputValidator {
     }
 }
 
-// ---------------------------------------------------------------------------
-// antikythera_ports::InputValidator implementation
-// ---------------------------------------------------------------------------
-
 #[async_trait::async_trait]
 impl antikythera_ports::InputValidator for InputValidator {
     fn validate_input(&self, input: &str, max_size: usize) -> Result<String, String> {
-        // Size check
         if input.len() > max_size {
             return Err(format!(
                 "Input size {} bytes exceeds maximum {max_size} bytes",
@@ -318,17 +311,14 @@ impl antikythera_ports::InputValidator for InputValidator {
             ));
         }
 
-        // Message length check
         if let ValidationResult::Invalid(msg) = self.validate_message_length(input) {
             return Err(msg);
         }
 
-        // Keyword check
         if let ValidationResult::Invalid(msg) = self.check_blocked_keywords(input) {
             return Err(msg);
         }
 
-        // HTML sanitization
         let sanitized = self.sanitize_html(input);
         Ok(sanitized)
     }

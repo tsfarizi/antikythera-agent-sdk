@@ -6,7 +6,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod wizard;
 
-// Re-export everything from the extracted config crate
+/// Re-export everything from the extracted config crate.
+///
 pub use antikythera_config::app::{
     AgentConfig, AppConfig, DocServerConfig, ModelConfig, ModelInfo, PromptsConfig, ProviderConfig,
     RestServerConfig,

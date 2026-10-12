@@ -1,0 +1,4 @@
+extend = "clients/python/pyproject.toml"
+
+[lint.per-file-ignores]
+"tests/python/*" = ["E501", "I001"]

@@ -96,8 +96,7 @@ def _validate_envelope(envelope: Any) -> None:
     """
     if not isinstance(envelope, dict):
         raise ValueError(
-            f"control: envelope must be an object (golden `*_event`), "
-            f"got {type(envelope).__name__}"
+            f"control: envelope must be an object (golden `*_event`), got {type(envelope).__name__}"
         )
     if set(envelope) != ENVELOPE_KEYS:
         raise ValueError(
@@ -143,7 +142,6 @@ class ControlChannel:
         )
         self._keepalive_thread.start()
 
-    # -- client registration / presence ----------------------------------
 
     def register_client(self, client_id: str, writer: Callable[[bytes], None]) -> None:
         """Daftarkan (atau ganti, pada reconnect) writer SSE client.
@@ -159,12 +157,16 @@ class ControlChannel:
         with self._lock:
             self._clients[client_id] = writer
 
-    def unregister_client(self, client_id: str) -> bool:
+    def unregister_client(
+        self, client_id: str, writer: Optional[Callable[[bytes], None]] = None
+    ) -> bool:
         """Hentikan keepalive client dan hapus presence-nya (idempotent).
 
         True bila ada client yang dihapus; False bila tidak terdaftar.
         """
         with self._lock:
+            if writer is not None and self._clients.get(client_id) is not writer:
+                return False
             removed = self._clients.pop(client_id, None)
         if removed is not None:
             logger.debug("control: unregistered client '%s'", client_id)
@@ -179,7 +181,6 @@ class ControlChannel:
         with self._lock:
             return client_id in self._clients
 
-    # -- push -------------------------------------------------------------
 
     def push(self, client_id: str, envelope: Dict[str, Any]) -> bool:
         """Kirim satu envelope event ke client; frame `data: {...}\\n\\n`.
@@ -200,11 +201,10 @@ class ControlChannel:
             writer(frame)
         except Exception:
             logger.debug("control: writer for client '%s' failed; unregistering", client_id)
-            self.unregister_client(client_id)
+            self.unregister_client(client_id, writer)
             return False
         return True
 
-    # -- correlation / POST-back -----------------------------------------
 
     def create_correlation(self, client_id: str, ttl_secs: float = DEFAULT_CORRELATION_TTL) -> str:
         """Buat correlation_id unik dan catat pending request dengan deadline.
@@ -287,6 +287,11 @@ class ControlChannel:
         WIRE_PROTOCOL §5). Timeout menimbulkan `PendingTimeoutError`
         berprefix `permission:` — error eksplisit di sisi core, bukan
         silent hang. Mengembalikan body POST-back hasil normalisasi.
+
+
+        Entri dikonsumsi di kedua jalur sukses (fast-path di atas dan setelah event) — satu
+        correlation satu delivery; sweep tidak akan menyingkirkan entri yang masih valid di
+        antara resolve dan pop ini karena wait_secs dibatasi oleh sisa TTL.
         """
         if not isinstance(timeout_secs, (int, float)) or timeout_secs < 0:
             raise ValueError("control: timeout_secs must be a non-negative number")
@@ -300,9 +305,7 @@ class ControlChannel:
             if pending.resolved:
                 self._pending.pop(correlation_id, None)
                 if pending.result is None:
-                    raise ValueError(
-                        f"control: resolved pending '{correlation_id}' has no result"
-                    )
+                    raise ValueError(f"control: resolved pending '{correlation_id}' has no result")
                 return pending.result
             remaining = pending.deadline - time.monotonic()
         wait_secs = min(timeout_secs, max(remaining, 0.0))
@@ -310,26 +313,18 @@ class ControlChannel:
             with self._lock:
                 self._pending.pop(correlation_id, None)
             raise PendingTimeoutError(
-                f"permission: correlation '{correlation_id}' timed out "
-                f"waiting for POST-back"
+                f"permission: correlation '{correlation_id}' timed out waiting for POST-back"
             )
         if not pending.event.wait(wait_secs):
             with self._lock:
                 self._pending.pop(correlation_id, None)
             raise PendingTimeoutError(
-                f"permission: correlation '{correlation_id}' timed out "
-                f"waiting for POST-back"
+                f"permission: correlation '{correlation_id}' timed out waiting for POST-back"
             )
         with self._lock:
-            # Entri dikonsumsi di kedua jalur sukses (fast-path di atas dan
-            # setelah event) — satu correlation satu delivery; sweep tidak
-            # akan menyingkirkan entri yang masih valid di antara resolve
-            # dan pop ini karena wait_secs dibatasi oleh sisa TTL.
             self._pending.pop(correlation_id, None)
         if pending.result is None:
-            raise ValueError(
-                f"control: pending '{correlation_id}' resolved with no result"
-            )
+            raise ValueError(f"control: pending '{correlation_id}' resolved with no result")
         return pending.result
 
     def pending_len(self) -> int:
@@ -337,7 +332,6 @@ class ControlChannel:
         with self._lock:
             return len(self._pending)
 
-    # -- keepalive lifecycle ----------------------------------------------
 
     def _keepalive_loop(self) -> None:
         while not self._stop.wait(self._keepalive_interval):
@@ -354,10 +348,8 @@ class ControlChannel:
             try:
                 writer(KEEPALIVE_FRAME)
             except Exception:
-                logger.debug(
-                    "control: keepalive failed for client '%s'; unregistering", client_id
-                )
-                self.unregister_client(client_id)
+                logger.debug("control: keepalive failed for client '%s'; unregistering", client_id)
+                self.unregister_client(client_id, writer)
 
     def _sweep_expired(self) -> None:
         now = time.monotonic()

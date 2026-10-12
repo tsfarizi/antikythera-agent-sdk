@@ -12,6 +12,57 @@ use crate::error::StorageError;
 
 use super::StorageBackend;
 
+fn validate_id(id: &str) -> Result<(), StorageError> {
+    let first = id
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = matches!(first.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (first.len() == 4
+            && (first.starts_with("COM") || first.starts_with("LPT"))
+            && first.as_bytes()[3].is_ascii_digit());
+    if id.is_empty()
+        || id.len() > 256
+        || id == "."
+        || id == ".."
+        || reserved
+        || id.ends_with('.')
+        || !id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+    {
+        return Err(StorageError::Config(
+            "invalid filesystem session id".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "../../../../tests/rust/unit/antikythera-storage/backend/filesystem.tests.rs"]
+mod tests;
+
+/// Replace a complete file only after its contents have been flushed.
+fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
 /// Filesystem-based storage backend.
 ///
 /// Sessions are stored as JSON files at `{data_dir}/{session_id}.json`.
@@ -34,29 +85,31 @@ impl FilesystemBackend {
         })
     }
 
-    fn session_path(&self, session_id: &str) -> PathBuf {
-        self.data_dir.join(format!("{session_id}.json"))
+    fn session_path(&self, session_id: &str) -> Result<PathBuf, StorageError> {
+        validate_id(session_id)?;
+        Ok(self.data_dir.join(format!("{session_id}.json")))
     }
 
-    fn backup_path(&self, session_id: &str) -> PathBuf {
-        self.backup_dir.join(format!("{session_id}.backup.json"))
+    fn backup_path(&self, session_id: &str) -> Result<PathBuf, StorageError> {
+        validate_id(session_id)?;
+        Ok(self.backup_dir.join(format!("{session_id}.backup.json")))
     }
 }
 
 #[async_trait]
 impl StorageBackend for FilesystemBackend {
     async fn save(&self, session_id: &str, data: &[u8]) -> Result<(), StorageError> {
-        let path = self.session_path(session_id);
+        let path = self.session_path(session_id)?;
         let data = data.to_vec();
         let path_clone = path.clone();
-        tokio::task::spawn_blocking(move || std::fs::write(&path_clone, data))
+        tokio::task::spawn_blocking(move || atomic_write(&path_clone, &data))
             .await
             .map_err(|e| StorageError::Backend(e.to_string()))?
             .map_err(|e| StorageError::Path { path, source: e })
     }
 
     async fn load(&self, session_id: &str) -> Result<Option<Vec<u8>>, StorageError> {
-        let path = self.session_path(session_id);
+        let path = self.session_path(session_id)?;
         let path_clone = path.clone();
         tokio::task::spawn_blocking(move || std::fs::read(&path_clone))
             .await
@@ -72,7 +125,7 @@ impl StorageBackend for FilesystemBackend {
     }
 
     async fn delete(&self, session_id: &str) -> Result<(), StorageError> {
-        let path = self.session_path(session_id);
+        let path = self.session_path(session_id)?;
         let path_clone = path.clone();
         tokio::task::spawn_blocking(move || match std::fs::remove_file(&path_clone) {
             Ok(()) => Ok(()),
@@ -102,7 +155,7 @@ impl StorageBackend for FilesystemBackend {
     }
 
     async fn exists(&self, session_id: &str) -> Result<bool, StorageError> {
-        let path = self.session_path(session_id);
+        let path = self.session_path(session_id)?;
         let path_clone = path.clone();
         tokio::task::spawn_blocking(move || match std::fs::metadata(&path_clone) {
             Ok(_) => Ok(true),
@@ -114,30 +167,32 @@ impl StorageBackend for FilesystemBackend {
     }
 
     async fn backup(&self, session_id: &str, data: &[u8]) -> Result<(), StorageError> {
-        let path = self.backup_path(session_id);
+        let path = self.backup_path(session_id)?;
         let data = data.to_vec();
         let path_clone = path.clone();
-        tokio::task::spawn_blocking(move || std::fs::write(&path_clone, data))
+        tokio::task::spawn_blocking(move || atomic_write(&path_clone, &data))
             .await
             .map_err(|e| StorageError::Backend(e.to_string()))?
             .map_err(|e| StorageError::Path { path, source: e })
     }
 
     async fn sync_backup(&self, session_id: &str) -> Result<(), StorageError> {
-        let backup = self.backup_path(session_id);
-        let target = self.session_path(session_id);
+        let backup = self.backup_path(session_id)?;
+        let target = self.session_path(session_id)?;
         let session_id = session_id.to_string();
-        tokio::task::spawn_blocking(move || std::fs::copy(&backup, &target))
-            .await
-            .map_err(|e| StorageError::Backend(e.to_string()))?
-            .map_err(|e| {
-                StorageError::Backup(format!("failed to sync backup for {session_id}: {e}"))
-            })?;
+        tokio::task::spawn_blocking(move || {
+            std::fs::read(&backup).and_then(|data| atomic_write(&target, &data))
+        })
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?
+        .map_err(|e| {
+            StorageError::Backup(format!("failed to sync backup for {session_id}: {e}"))
+        })?;
         Ok(())
     }
 
     async fn verify_sync(&self, session_id: &str) -> Result<bool, StorageError> {
-        let path = self.session_path(session_id);
+        let path = self.session_path(session_id)?;
         let path_clone = path.clone();
         tokio::task::spawn_blocking(move || match std::fs::metadata(&path_clone) {
             Ok(_) => Ok(true),
@@ -149,7 +204,7 @@ impl StorageBackend for FilesystemBackend {
     }
 
     async fn delete_backup(&self, session_id: &str) -> Result<(), StorageError> {
-        let path = self.backup_path(session_id);
+        let path = self.backup_path(session_id)?;
         let path_clone = path.clone();
         tokio::task::spawn_blocking(move || match std::fs::remove_file(&path_clone) {
             Ok(()) => Ok(()),

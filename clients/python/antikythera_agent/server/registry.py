@@ -91,9 +91,11 @@ class UnionRegistry:
         """Daftarkan definisi tool yang dieksekusi peer client (owner `client`)."""
         self._register(WIRE["OWNER_CLIENT"], definition)
 
-    def register_mcp(self, definition: Dict[str, Any]) -> None:
+    def register_mcp(
+        self, definition: Dict[str, Any], handler: Optional[Callable[..., Any]] = None
+    ) -> None:
         """Daftarkan definisi tool MCP; dieksekusi server-side (owner `mcp`)."""
-        self._register(WIRE["OWNER_MCP"], definition)
+        self._register(WIRE["OWNER_MCP"], definition, handler)
 
     def _register(
         self,

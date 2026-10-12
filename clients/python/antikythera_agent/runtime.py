@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -40,13 +41,18 @@ class WasmRuntime:
         self,
         wasi_stdout: Optional[Callable[[str], None]] = None,
         wasi_stderr: Optional[Callable[[str], None]] = None,
+        hooks_provider: Any = None,
     ) -> None:
         """Initialize WASM runtime.
 
         Args:
             wasi_stdout: Callback for WASI stdout output.
             wasi_stderr: Callback for WASI stderr output.
+            hooks_provider: Hook implementation captured by this runtime instance.
+                When omitted, captures the current host provider at construction.
         """
+        self._call_lock = threading.RLock()
+        self.hooks_provider = hooks_provider if hooks_provider is not None else host.get_provider()
         self._wasm_path = _WASM_PATH
         self._wasi_stdout = wasi_stdout or (lambda s: None)
         self._wasi_stderr = wasi_stderr or (lambda s: None)
@@ -58,7 +64,12 @@ class WasmRuntime:
         self._initialized = False
 
     def _ensure_initialized(self) -> None:
-        """Lazy-initialize the wasmtime component runtime."""
+        """Lazy-initialize the wasmtime component runtime.
+
+
+        WasiConfig.stdout_custom / stderr_custom accept callables invoked with each chunk
+        written by the guest, preserving the callback contract of wasi_stdout / wasi_stderr.
+        """
         if self._initialized:
             return
 
@@ -73,25 +84,19 @@ class WasmRuntime:
             import wasmtime.component
         except ImportError:
             raise WasmRuntimeError(
-                "wasmtime is required for WASM execution. "
-                "Install with: pip install wasmtime"
+                "wasmtime is required for WASM execution. Install with: pip install wasmtime"
             )
 
         self._wasmtime = wasmtime
 
         engine = wasmtime.Engine()
-        self._component = wasmtime.component.Component.from_file(
-            engine, str(self._wasm_path)
-        )
+        self._component = wasmtime.component.Component.from_file(engine, str(self._wasm_path))
 
         self._linker = wasmtime.component.Linker(engine)
         self._linker.add_wasip2()
-        host.add_to_linker(self._linker)
+        host.add_to_linker(self._linker, lambda: self.hooks_provider)
 
         wasi = wasmtime.WasiConfig()
-        # WasiConfig.stdout_custom / stderr_custom accept callables invoked
-        # with each chunk written by the guest, preserving the callback
-        # contract of wasi_stdout / wasi_stderr.
         wasi.stdout_custom = self._wasi_stdout
         wasi.stderr_custom = self._wasi_stderr
 
@@ -99,9 +104,7 @@ class WasmRuntime:
         self._store.set_wasi(wasi)
 
         self._instance = self._linker.instantiate(self._store, self._component)
-        self._runner_export_index = self._instance.get_export_index(
-            self._store, _RUNNER_INTERFACE
-        )
+        self._runner_export_index = self._instance.get_export_index(self._store, _RUNNER_INTERFACE)
         if self._runner_export_index is None:
             raise WasmRuntimeError(
                 f"Runner interface '{_RUNNER_INTERFACE}' not found in WASM "
@@ -111,6 +114,20 @@ class WasmRuntime:
         self._initialized = True
 
     def call(self, func_name: str, args: str) -> str:
+        """Serialize component calls and expose failures as WasmRuntimeError.
+
+        The reentrant lock protects initialization and Wasmtime Store access
+        for this instance. Calls to other runtime instances remain independent.
+        """
+        with self._call_lock:
+            try:
+                return self._call(func_name, args)
+            except WasmRuntimeError:
+                raise
+            except Exception as exc:
+                raise WasmRuntimeError(f"WASM call '{func_name}' failed: {exc}") from exc
+
+    def _call(self, func_name: str, args: str) -> str:
         """Call an exported WASM runner function.
 
         The runner interface declares WIT kebab-case exports; ``func_name``
@@ -183,18 +200,19 @@ class WasmRuntime:
             raise WasmRuntimeError(f"WASM call '{func_name}' failed: {e}") from e
 
     def _decode_result(self, func_name: str, raw: Any) -> str:
-        """Decode a component-ABI return value into the string contract."""
+        """Decode a component-ABI return value into the string contract.
+
+
+        Bare str is the err case of result<T, string> (the wasmtime component binding returns
+        the error string directly when the ok payload is not a string).
+        """
         if isinstance(raw, bool):
             return "True" if raw else "False"
         if isinstance(raw, int):
             return str(raw)
         if isinstance(raw, str):
-            # Bare str is the err case of result<T, string> (the wasmtime
-            # component binding returns the error string directly when the
-            # ok payload is not a string).
             raise WasmRuntimeError(raw)
         if hasattr(raw, "tag") and hasattr(raw, "payload"):
-            # Variant: result<string, string>.
             if raw.tag == "err":
                 raise WasmRuntimeError(raw.payload)
             payload = raw.payload
@@ -220,6 +238,4 @@ class WasmRuntime:
         try:
             return json.loads(result_json)
         except json.JSONDecodeError as e:
-            raise WasmRuntimeError(
-                f"Invalid JSON response from '{func_name}': {e}"
-            ) from e
+            raise WasmRuntimeError(f"Invalid JSON response from '{func_name}': {e}") from e

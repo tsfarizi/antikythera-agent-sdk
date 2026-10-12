@@ -1,3 +1,10 @@
+//! Wit-bindgen emits pre-2024-edition export shims; the unsafe-op-in- unsafe-fn lint fires inside
+//! the generated code, not our wrapper.
+//!
+//! Export layer is wasm-gated; dead on native targets.
+//!
+//! Wasm-only: WIT export names break rustc's ld version script on native cdylibs.
+//!
 //! WIT export layer for the `tool-registry-component` world.
 //!
 //! Thin adapter between the WIT world
@@ -11,10 +18,7 @@
 //! `wit_bindgen::generate!` against the root wit, a unit struct implementing
 //! `exports::antikythera::agent_sdk::<interface>::Guest`, and `export!`.
 
-// wit-bindgen emits pre-2024-edition export shims; the unsafe-op-in-
-// unsafe-fn lint fires inside the generated code, not our wrapper.
 #![allow(unsafe_op_in_unsafe_fn)]
-// Export layer is wasm-gated; dead on native targets.
 #![allow(dead_code)]
 
 wit_bindgen::generate!({
@@ -49,6 +53,9 @@ fn echo_handler(arguments: &serde_json::Value) -> Result<serde_json::Value, Stri
     Ok(arguments.clone())
 }
 
+/// Register_handler keeps the existing definition (no required params), so echo accepts any
+/// arguments object.
+///
 fn init_runner() -> ToolRunner {
     let mut runner = ToolRunner::new();
     runner.register_tool(ToolDefinition {
@@ -63,8 +70,6 @@ fn init_runner() -> ToolRunner {
         })),
         ..Default::default()
     });
-    // register_handler keeps the existing definition (no required params),
-    // so echo accepts any arguments object.
     runner.register_handler("echo", echo_handler);
     runner
 }
@@ -76,27 +81,28 @@ impl exports::antikythera::agent_sdk::tool_registry::Guest for ToolRegistryCompo
         runner().registry().to_json().map_err(|e| e.to_string())
     }
 
+    /// ToolRegistry::validate_call keeps its empty-registry accept-all guard untouched; with the
+    /// reference builtin registered, unknown tools are rejected here (documented Err case of the
+    /// interface).
+    ///
     fn validate_tool_call(tool_name: String, arguments_json: String) -> Result<(), String> {
         let arguments: serde_json::Value = serde_json::from_str(&arguments_json)
             .map_err(|e| format!("invalid arguments JSON: {e}"))?;
-        // ToolRegistry::validate_call keeps its empty-registry accept-all
-        // guard untouched; with the reference builtin registered, unknown
-        // tools are rejected here (documented Err case of the interface).
         runner()
             .registry()
             .validate_call(&tool_name, &arguments)
             .map_err(|e| e.to_string())
     }
 
+    /// Non-builtin tools MUST surface the delegation signal, not a registry NotFound rejection:
+    /// execute() validates against the registry (populated by echo) before the handler lookup, so
+    /// the builtin check is hoisted here — the flow documented in wasm.rs.
+    ///
     fn execute_builtin(
         tool_name: String,
         arguments_json: String,
         step_id: u32,
     ) -> Result<String, String> {
-        // Non-builtin tools MUST surface the delegation signal, not a
-        // registry NotFound rejection: execute() validates against the
-        // registry (populated by echo) before the handler lookup, so the
-        // builtin check is hoisted here — the flow documented in wasm.rs.
         if !runner().is_builtin(&tool_name) {
             return Err(ToolRunnerError::HostRequired {
                 tool: tool_name.clone(),
@@ -112,6 +118,5 @@ impl exports::antikythera::agent_sdk::tool_registry::Guest for ToolRegistryCompo
     }
 }
 
-// Wasm-only: WIT export names break rustc's ld version script on native cdylibs.
 #[cfg(target_family = "wasm")]
 export!(ToolRegistryComponent);

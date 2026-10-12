@@ -50,7 +50,7 @@
 //! Build the component:
 //!
 //! ```text
-//! cargo component build -p logic-core-template --release --target wasm32-wasip2 --no-default-features --features component
+//! cargo build -p logic-core-template --release --target wasm32-wasip2 --no-default-features --features component
 //! ```
 //!
 //! The artifact exports `antikythera:agent-sdk/runner@1.0.0` (16 functions).
@@ -61,7 +61,7 @@
 
 /// Custom `init` behavior.
 ///
-/// TODO: isi logika host (mis. parse config, siapkan session, return session id).
+/// An implementation parses configuration, creates a session, and returns its identifier.
 /// `None` = template default: parse `config-json` leniently, create/reuse an
 /// in-memory session, and return the session id — the same return contract as
 /// the SDK runner (a bare id string, not a JSON object).
@@ -71,7 +71,7 @@ pub fn custom_init(_config_json: &str) -> Option<String> {
 
 /// Custom `prepare-user-turn` behavior.
 ///
-/// TODO: isi logika host (mis. bangun messages, system prompt, tool block).
+/// An implementation assembles the session messages, system prompt, and tool catalogue.
 /// `None` = `Err` not-implemented (`{"error":"not implemented","function":"prepare-user-turn"}`).
 pub fn custom_prepare_turn(_request_json: &str) -> Option<String> {
     None
@@ -79,8 +79,8 @@ pub fn custom_prepare_turn(_request_json: &str) -> Option<String> {
 
 /// Custom `commit-llm-response` behavior.
 ///
-/// TODO: isi logika host (mis. proses respons, tentukan action, kembalikan
-/// CommitResult envelope: action/content/tool_name/tool_input/session_id/step/fsm_state).
+/// An implementation processes the model response and returns a CommitResult envelope
+/// with action, content, tool_name, tool_input, session_id, step, and fsm_state fields.
 /// `None` = `Err` not-implemented.
 pub fn custom_commit_response(
     _prepared_turn_json: &str,
@@ -91,7 +91,7 @@ pub fn custom_commit_response(
 
 /// Custom `commit-llm-stream` behavior.
 ///
-/// TODO: isi logika host (mis. gabungkan chunk pending lalu commit).
+/// An implementation joins buffered session chunks and commits the complete response.
 /// `None` = `Err` not-implemented.
 pub fn custom_commit_stream(_prepared_turn_json: &str) -> Option<String> {
     None
@@ -99,7 +99,7 @@ pub fn custom_commit_stream(_prepared_turn_json: &str) -> Option<String> {
 
 /// Custom `process-llm-response-for-session` behavior.
 ///
-/// TODO: isi logika host (kembalikan serialized AgentAction:
+/// An implementation returns a serialized AgentAction:
 /// `{"action":"call_tool",...}` | `{"action":"final","response":...}` | `{"action":"retry","error":...}`).
 /// `None` = `Err` not-implemented.
 pub fn custom_process_llm_response(_session_id: &str, _llm_response_json: &str) -> Option<String> {
@@ -108,9 +108,9 @@ pub fn custom_process_llm_response(_session_id: &str, _llm_response_json: &str) 
 
 /// Custom `process-tool-result-for-session` behavior.
 ///
-/// TODO: isi logika host (terima ToolResultInput:
-/// tool_name/success/output_json/error_message/correlation_id; kembalikan
-/// `{session_id, step, next_message, tool_result}`).
+/// An implementation consumes ToolResultInput fields tool_name, success, output_json,
+/// error_message, and correlation_id, then returns session_id, step, next_message,
+/// and tool_result in the result envelope.
 /// `None` = `Err` not-implemented.
 pub fn custom_process_tool_result(_session_id: &str, _tool_result_json: &str) -> Option<String> {
     None
@@ -118,7 +118,7 @@ pub fn custom_process_tool_result(_session_id: &str, _tool_result_json: &str) ->
 
 /// Custom `append-llm-chunk` behavior.
 ///
-/// TODO: isi logika host (buffer chunk streaming per session).
+/// An implementation buffers streaming chunks for the specified session.
 /// `None` = `Err` not-implemented.
 pub fn custom_append_chunk(
     _session_id: &str,
@@ -130,7 +130,7 @@ pub fn custom_append_chunk(
 
 /// Custom `drain-events` behavior.
 ///
-/// TODO: isi logika host (kembalikan JSON array StreamEvent:
+/// An implementation returns a JSON array of StreamEvent records:
 /// `{seq, session_id, step, correlation_id, kind, payload}`).
 /// `None` = `Err` not-implemented.
 pub fn custom_drain_events(_session_id: &str) -> Option<String> {
@@ -139,7 +139,7 @@ pub fn custom_drain_events(_session_id: &str) -> Option<String> {
 
 /// Custom `sweep-idle-sessions` behavior.
 ///
-/// TODO: isi logika host (reap sesi idle, kembalikan jumlah).
+/// An implementation removes idle sessions and returns the number removed.
 /// `None` = `Err` not-implemented.
 pub fn custom_sweep_idle(_now_unix_ms: Option<i64>) -> Option<u32> {
     None
@@ -147,8 +147,8 @@ pub fn custom_sweep_idle(_now_unix_ms: Option<i64>) -> Option<u32> {
 
 /// Custom `register-tools` behavior.
 ///
-/// TODO: isi logika host (validasi array ToolDefinition, simpan katalog,
-/// kembalikan jumlah).
+/// An implementation validates ToolDefinition records, stores the catalogue,
+/// and returns the number of registered tools.
 /// `None` = `Err` not-implemented.
 pub fn custom_register_tools(_tools_json: &str) -> Option<u32> {
     None
@@ -156,7 +156,7 @@ pub fn custom_register_tools(_tools_json: &str) -> Option<u32> {
 
 /// Custom `get-tools-prompt` behavior.
 ///
-/// TODO: isi logika host (kembalikan blok tool-list siap suntik ke system prompt).
+/// An implementation formats the registered tools for inclusion in the system prompt.
 /// `None` = `Err` not-implemented.
 pub fn custom_get_tools_prompt() -> Option<String> {
     None
@@ -164,7 +164,7 @@ pub fn custom_get_tools_prompt() -> Option<String> {
 
 /// Custom `set-context-policy` behavior.
 ///
-/// TODO: isi logika host (terima envelope `{"policy": {...}}`).
+/// An implementation applies the context policy in a `{"policy": {...}}` envelope.
 /// `None` = `Err` not-implemented.
 pub fn custom_set_context_policy(_policy_json: &str) -> Option<bool> {
     None
@@ -172,7 +172,7 @@ pub fn custom_set_context_policy(_policy_json: &str) -> Option<bool> {
 
 /// Custom `get-telemetry-snapshot` behavior.
 ///
-/// TODO: isi logika host (kembalikan TelemetrySnapshot JSON:
+/// An implementation returns a TelemetrySnapshot JSON object containing:
 /// session_id/correlation_id/counters/total_prepare_latency_ms/total_commit_latency_ms/fsm_state).
 /// `None` = `Err` not-implemented.
 pub fn custom_get_telemetry(_session_id: &str) -> Option<String> {
@@ -181,28 +181,12 @@ pub fn custom_get_telemetry(_session_id: &str) -> Option<String> {
 
 /// Custom `get-slo-snapshot` behavior.
 ///
-/// TODO: isi logika host (kembalikan SloSnapshot JSON:
+/// An implementation returns a SloSnapshot JSON object containing:
 /// session_id/correlation_id/success_rate/tool_error_rate/retry_ratio/p95_*).
 /// `None` = `Err` not-implemented.
 pub fn custom_get_slo(_session_id: &str) -> Option<String> {
     None
 }
-
-// ===========================================================================
-// Host-imports plumbing (component build only)
-// ===========================================================================
-//
-// The `host_*` helpers bind the `host-imports` WIT interface
-// (`crate::component::antikythera::agent_sdk::host_imports`): call-llm,
-// save-state, load-state, emit-tool-call, log-message. A host-imports call
-// is the ONLY escape hatch a logic core has to the outside world — the host
-// grants permission by wiring the import; there is no other way out of the
-// component. The helpers are compiled only in the `component` build, so a
-// native build never references the wit-bindgen import shims (which abort
-// via `unreachable!()` on non-wasm targets).
-//
-// JSON keys follow the generated Rust field names (snake_case), matching the
-// JSON-string convention used across the runner surface.
 
 /// Call the host LLM service (`host-imports.call-llm`).
 ///
@@ -212,6 +196,15 @@ pub fn custom_get_slo(_session_id: &str) -> Option<String> {
 /// `schema_name`, `metadata_json`. Returns the `llm-response` record
 /// serialized to JSON (snake_case keys).
 #[cfg(feature = "component")]
+/// Host-imports plumbing (component build only) The `host_*` helpers bind the `host-imports` WIT
+/// interface (`crate::component::antikythera::agent_sdk::host_imports`): call-llm, save-state,
+/// load-state, emit-tool-call, log-message. A host-imports call is the ONLY escape hatch a logic
+/// core has to the outside world — the host grants permission by wiring the import; there is no
+/// other way out of the component. The helpers are compiled only in the `component` build, so a
+/// native build never references the wit-bindgen import shims (which abort via `unreachable!()`
+/// on non-wasm targets). JSON keys follow the generated Rust field names (snake_case), matching
+/// the JSON-string convention used across the runner surface.
+///
 pub fn host_call_llm(request_json: &str) -> Result<String, String> {
     use crate::component::antikythera::agent_sdk::host_imports::call_llm;
     use crate::component::antikythera::agent_sdk::vocabulary::LlmRequest;
@@ -294,6 +287,8 @@ pub fn host_load_state(context_id: &str) -> Result<Option<String>, String> {
 /// Returns the `tool-execution-result` record serialized to JSON
 /// (`tool_name`, `success`, `output_json`, `error_message`, `step_id`).
 #[cfg(feature = "component")]
+/// `session-id` is optional in WIT; an empty host string maps to `None`.
+///
 pub fn host_emit_tool_call(
     tool_name: &str,
     arguments_json: &str,
@@ -303,7 +298,6 @@ pub fn host_emit_tool_call(
     use crate::component::antikythera::agent_sdk::host_imports::emit_tool_call;
     use crate::component::antikythera::agent_sdk::vocabulary::ToolCallEvent;
 
-    // `session-id` is optional in WIT; an empty host string maps to `None`.
     let event = ToolCallEvent {
         tool_name: tool_name.to_string(),
         arguments_json: arguments_json.to_string(),

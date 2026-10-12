@@ -138,6 +138,35 @@ impl LlmProvider for StubLlmProvider {
     }
 }
 
+#[derive(Default)]
+struct StreamLines {
+    pending: Vec<u8>,
+}
+impl StreamLines {
+    fn push(&mut self, bytes: &[u8], eof: bool) -> Result<Vec<String>, LlmError> {
+        self.pending.extend_from_slice(bytes);
+        if self.pending.len() > 8 * 1024 * 1024 {
+            return Err(LlmError::InvalidResponse(
+                "stream record exceeds 8 MiB".into(),
+            ));
+        }
+        let mut lines = Vec::new();
+        while let Some(end) = self.pending.iter().position(|b| *b == b'\n') {
+            let bytes = self.pending.drain(..=end).collect();
+            lines.push(
+                String::from_utf8(bytes).map_err(|e| LlmError::InvalidResponse(e.to_string()))?,
+            );
+        }
+        if eof && !self.pending.is_empty() {
+            lines.push(
+                String::from_utf8(std::mem::take(&mut self.pending))
+                    .map_err(|e| LlmError::InvalidResponse(e.to_string()))?,
+            );
+        }
+        Ok(lines)
+    }
+}
+
 /// Ollama provider: non-streaming via `OllamaClient`, streaming via the
 /// `/api/chat` NDJSON stream.
 pub struct OllamaLlmProvider {
@@ -179,21 +208,16 @@ impl LlmProvider for OllamaLlmProvider {
         tokens: UnboundedSender<String>,
     ) -> Result<LlmResponse, LlmError> {
         let messages = parse_messages(&request.messages_json)?;
-        let system = messages
-            .iter()
-            .find(|m| m.role == MessageRole::System)
-            .map(|m| m.content());
         let chat_messages: Vec<Value> = messages
             .iter()
-            .filter(|m| m.role != MessageRole::System)
             .map(|m| json!({"role": role_str(m.role), "content": m.content()}))
             .collect();
         let body = json!({
             "model": request.model.as_deref().unwrap_or(&self.model),
             "messages": chat_messages,
-            "system": system,
             "stream": true,
             "format": if request.force_json { Some("json") } else { None },
+            "options": {"temperature": request.temperature, "num_predict": request.max_tokens},
         });
         let url = format!("{}/api/chat", self.endpoint);
         let mut stream = self
@@ -209,20 +233,23 @@ impl LlmProvider for OllamaLlmProvider {
             return Err(LlmError::Transport(format!("ollama HTTP {status}: {text}")));
         }
         let mut full = String::new();
-        while let Some(chunk) = stream
-            .chunk()
-            .await
-            .map_err(|e| LlmError::Transport(e.to_string()))?
-        {
-            let text = String::from_utf8_lossy(&chunk);
-            for line in text.lines() {
+        let mut lines = StreamLines::default();
+        loop {
+            let chunk = stream
+                .chunk()
+                .await
+                .map_err(|e| LlmError::Transport(e.to_string()))?;
+            let eof = chunk.is_none();
+            for line in lines.push(chunk.as_deref().unwrap_or_default(), eof)? {
                 let line = line.trim();
                 if line.is_empty() {
                     continue;
                 }
-                let Ok(value) = serde_json::from_str::<Value>(line) else {
-                    continue;
-                };
+                let value: Value = serde_json::from_str(line)
+                    .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
+                if let Some(error) = value["error"].as_str() {
+                    return Err(LlmError::Transport(error.into()));
+                }
                 if let Some(delta) = value["message"]["content"].as_str() {
                     full.push_str(delta);
                     let _ = tokens.send(delta.to_string());
@@ -239,16 +266,13 @@ impl LlmProvider for OllamaLlmProvider {
                     });
                 }
             }
+            if eof {
+                break;
+            }
         }
-        Ok(LlmResponse {
-            content: full,
-            model: request.model.clone(),
-            session_id: request.session_id.clone(),
-            message_json: None,
-            tokens_used: None,
-            finish_reason: Some("stop".to_string()),
-            raw_response_json: None,
-        })
+        Err(LlmError::InvalidResponse(
+            "stream ended without completion marker".into(),
+        ))
     }
 }
 
@@ -316,6 +340,9 @@ impl LlmProvider for OpenAiLlmProvider {
         if let Some(max_tokens) = request.max_tokens {
             body["max_tokens"] = json!(max_tokens);
         }
+        if request.force_json {
+            body["response_format"] = json!({"type":"json_object"});
+        }
         let url = format!("{}/chat/completions", self.endpoint);
         let mut stream = self
             .http
@@ -332,13 +359,14 @@ impl LlmProvider for OpenAiLlmProvider {
             return Err(LlmError::Transport(format!("openai HTTP {status}: {text}")));
         }
         let mut full = String::new();
-        while let Some(chunk) = stream
-            .chunk()
-            .await
-            .map_err(|e| LlmError::Transport(e.to_string()))?
-        {
-            let text = String::from_utf8_lossy(&chunk);
-            for line in text.lines() {
+        let mut lines = StreamLines::default();
+        loop {
+            let chunk = stream
+                .chunk()
+                .await
+                .map_err(|e| LlmError::Transport(e.to_string()))?;
+            let eof = chunk.is_none();
+            for line in lines.push(chunk.as_deref().unwrap_or_default(), eof)? {
                 let line = line.trim();
                 if line.is_empty() {
                     continue;
@@ -358,24 +386,23 @@ impl LlmProvider for OpenAiLlmProvider {
                         raw_response_json: None,
                     });
                 }
-                let Ok(value) = serde_json::from_str::<Value>(data) else {
-                    continue;
-                };
+                let value: Value = serde_json::from_str(data)
+                    .map_err(|e| LlmError::InvalidResponse(e.to_string()))?;
+                if !value["error"].is_null() {
+                    return Err(LlmError::Transport(value["error"].to_string()));
+                }
                 if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
                     full.push_str(delta);
                     let _ = tokens.send(delta.to_string());
                 }
             }
+            if eof {
+                break;
+            }
         }
-        Ok(LlmResponse {
-            content: full,
-            model: request.model.clone(),
-            session_id: request.session_id.clone(),
-            message_json: None,
-            tokens_used: None,
-            finish_reason: Some("stop".to_string()),
-            raw_response_json: None,
-        })
+        Err(LlmError::InvalidResponse(
+            "stream ended without completion marker".into(),
+        ))
     }
 }
 
@@ -451,3 +478,7 @@ struct WireMessage {
     role: String,
     content: String,
 }
+
+#[cfg(test)]
+#[path = "../../../tests/rust/unit/antikythera-server-runtime/llm.streaming_tests.rs"]
+mod streaming_tests;

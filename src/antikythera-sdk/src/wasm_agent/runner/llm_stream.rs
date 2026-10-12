@@ -23,6 +23,19 @@ impl AgentRunnerRuntime {
     /// Validates the request, manages session lifecycle (restore detection,
     /// FSM transitions), builds the message list, and returns a serialized
     /// [`PreparedTurn`] that the host can hand to the LLM provider.
+    /// Snapshot the tool block before the mutable session borrow to avoid borrow conflict.
+    ///
+    /// Validates FSM state for session restore consistency. Restored sessions may carry
+    /// mid-operation states (e.g., LlmStreaming, ToolRequested, Final) which are invalid for a
+    /// fresh user turn. Reset to Idle.
+    ///
+    /// FSM: Idle -> UserTurnPrepared -> LlmStreaming.
+    ///
+    /// Logic-hooks: `prepare-turn` is consulted after the SDK built its default prepared turn.
+    /// Passthrough keeps the default byte-identical; an override's present fields are
+    /// authoritative, absent fields fall back to the default. A hook error aborts the turn
+    /// (fail-closed).
+    ///
     pub(super) fn prepare_user_turn(
         &mut self,
         request_json: &str,
@@ -35,7 +48,6 @@ impl AgentRunnerRuntime {
         let now_ms = now_unix_ms();
         let _ = self.sweep_idle_sessions(now_ms)?;
 
-        // Snapshot the tool block before the mutable session borrow to avoid borrow conflict.
         let tool_block_snapshot = self.known_tools.to_prompt_block();
 
         let session_id = input.session_id.clone().unwrap_or_else(new_session_id);
@@ -85,9 +97,6 @@ impl AgentRunnerRuntime {
         let runtime = self.ensure_session(&session_id);
         runtime.touch(now_ms);
 
-        // Validate FSM state for session restore consistency.
-        // Restored sessions may carry mid-operation states (e.g., LlmStreaming,
-        // ToolRequested, Final) which are invalid for a fresh user turn. Reset to Idle.
         let current_fsm = runtime.state.fsm_state;
         if current_fsm != AgentFsmState::Idle {
             wasm_log(
@@ -110,7 +119,6 @@ impl AgentRunnerRuntime {
             );
         }
 
-        // FSM: Idle -> UserTurnPrepared -> LlmStreaming
         let fsm_before = runtime.state.fsm_state;
         if let Err(e) = runtime
             .state
@@ -229,10 +237,6 @@ impl AgentRunnerRuntime {
             AgentRunnerError::Internal(format!("Failed to encode prepared turn: {e}"))
         })?;
 
-        // logic-hooks: `prepare-turn` is consulted after the SDK built its
-        // default prepared turn. Passthrough keeps the default byte-identical;
-        // an override's present fields are authoritative, absent fields fall
-        // back to the default. A hook error aborts the turn (fail-closed).
         #[cfg(all(feature = "component", target_family = "wasm"))]
         let encoded = super::logic_hooks::apply_prepare_turn_override(
             &runtime.state,
@@ -250,6 +254,8 @@ impl AgentRunnerRuntime {
     ///
     /// Transitions the FSM to `LlmStreaming` on the first chunk if the
     /// session is still in `UserTurnPrepared`. Returns `Ok(true)` on success.
+    /// FSM: UserTurnPrepared -> LlmStreaming (first chunk signals streaming start).
+    ///
     pub(super) fn append_llm_chunk(
         &mut self,
         session_id: &str,
@@ -260,7 +266,6 @@ impl AgentRunnerRuntime {
         let runtime = self.ensure_session(session_id);
         runtime.touch(now_unix_ms());
 
-        // FSM: UserTurnPrepared -> LlmStreaming (first chunk signals streaming start)
         if runtime.state.fsm_state == AgentFsmState::UserTurnPrepared {
             let fsm_before = runtime.state.fsm_state;
             if let Err(e) = runtime
@@ -309,6 +314,30 @@ impl AgentRunnerRuntime {
     /// [`crate::wasm_agent::processor::process_llm_response`], handles FSM
     /// transitions, and returns a serialized [`CommitResult`] indicating
     /// whether the response is final, requests a tool call, or requires a retry.
+    /// Snapshot the registry before the mutable session borrow to avoid borrow conflict.
+    ///
+    /// FSM guard: ensure we're in LlmStreaming state before processing LLM response.
+    ///
+    /// FSM transitions are handled inside process_llm_response (processor). Runner only ensures
+    /// the correct pre-condition (LlmStreaming) via the guard above.
+    ///
+    /// Validates the tool call against the registered registry (no-op if empty).
+    ///
+    /// Logic-hooks: `decide-action` is consulted before the default action decision is finalized.
+    /// Passthrough keeps the SDK default; an override is committed as the action result (e.g.
+    /// forcing `final` by returning the SDK's envelope). A hook error aborts (fail-closed).
+    ///
+    /// After NLL, `runtime`'s borrow on `self` has ended. Try in-process execution for builtin
+    /// tools via toolrunner.
+    ///
+    /// Component path: execute builtin tools through the imported `tool-registry` interface.
+    /// `wasm-tools compose` supplies the implementation when the composite is assembled; until
+    /// then the Native builds with `feature = "component"` (e.g. the native test suites) compile
+    /// the wit-bindgen shims but have no wired host for the `tool-registry` import; calling them
+    /// aborts via `unreachable!()`. The import only exists on wasm targets, so the block is gated
+    /// on the target family as well: native tool calls are delegated to the host (pre-component
+    /// behavior), wasm components execute builtins.
+    ///
     pub(super) fn commit_llm_response(
         &mut self,
         prepared_turn_json: &str,
@@ -326,7 +355,6 @@ impl AgentRunnerRuntime {
             "Committing LLM response",
         );
 
-        // Snapshot the registry before the mutable session borrow to avoid borrow conflict.
         let registry_snapshot = self.known_tools.clone();
 
         let runtime = self.ensure_session(&prepared.session_id);
@@ -338,7 +366,6 @@ impl AgentRunnerRuntime {
             tool_result: None,
         });
 
-        // FSM guard: ensure we're in LlmStreaming state before processing LLM response
         if runtime.state.fsm_state != AgentFsmState::LlmStreaming {
             let fsm_before = runtime.state.fsm_state;
             wasm_log(
@@ -374,8 +401,6 @@ impl AgentRunnerRuntime {
             serde_json::json!({"length": llm_response_json.len()}),
         );
 
-        // FSM transitions are handled inside process_llm_response (processor).
-        // Runner only ensures the correct pre-condition (LlmStreaming) via the guard above.
         let result = match action {
             AgentAction::Final { response } => {
                 let content = if let Some(text) = response.as_str() {
@@ -409,7 +434,6 @@ impl AgentRunnerRuntime {
                 }
             }
             AgentAction::CallTool { tool, input } => {
-                // Validate the tool call against the registered registry (no-op if empty).
                 if let Err(validation_err) = validate_tool_call(&registry_snapshot, &tool, &input) {
                     wasm_log(
                         &prepared.session_id,
@@ -461,10 +485,6 @@ impl AgentRunnerRuntime {
             }
         };
 
-        // logic-hooks: `decide-action` is consulted before the default action
-        // decision is finalized. Passthrough keeps the SDK default; an
-        // override is committed as the action result (e.g. forcing `final` by
-        // returning the SDK's envelope). A hook error aborts (fail-closed).
         #[cfg(all(feature = "component", target_family = "wasm"))]
         let result = super::logic_hooks::apply_decide_action_override(
             &runtime.state,
@@ -479,8 +499,6 @@ impl AgentRunnerRuntime {
         );
         runtime.pending_llm_chunks.clear();
 
-        // After NLL, `runtime`'s borrow on `self` has ended.
-        // Try in-process execution for builtin tools via toolrunner.
         #[cfg(feature = "toolrunner")]
         {
             if result.action == "call_tool" {
@@ -511,17 +529,6 @@ impl AgentRunnerRuntime {
             }
         }
 
-        // Component path: execute builtin tools through the imported
-        // `tool-registry` interface. `wasm-tools compose` supplies the
-        // implementation when the composite is assembled; until then the
-        // import is unresolved, which is the sanctioned intermediate state.
-        //
-        // Native builds with `feature = "component"` (e.g. the native test
-        // suites) compile the wit-bindgen shims but have no wired host for
-        // the `tool-registry` import; calling them aborts via `unreachable!()`.
-        // The import only exists on wasm targets, so the block is gated on
-        // the target family as well: native tool calls are delegated to the
-        // host (pre-component behavior), wasm components execute builtins.
         #[cfg(all(feature = "component", target_family = "wasm"))]
         {
             if result.action == "call_tool" {
@@ -618,6 +625,16 @@ impl AgentRunnerRuntime {
     /// Similar to [`Self::commit_llm_response`] but does not persist the
     /// user message or the assistant reply into `message_history`. Useful
     /// for dry-run or validation-only flows.
+    /// FSM guard: ensure we're in LlmStreaming state before processing.
+    ///
+    /// Logic-hooks: `decide-action` is consulted before the default action derivation runs.
+    /// Passthrough keeps the SDK default; an override is committed as the action result (the same
+    /// envelope the SDK produces). A hook error aborts the operation (fail-closed).
+    ///
+    /// Composed provider passed through. Precedence A1a: consult the host-supplied
+    /// `runtime-hooks` at the same pipeline point; it is skipped entirely when
+    /// `runtime_hooks_enabled` is false.
+    ///
     pub(super) fn process_llm_response(
         &mut self,
         session_id: &str,
@@ -628,7 +645,6 @@ impl AgentRunnerRuntime {
         runtime.touch(now_unix_ms());
         wasm_log(session_id, LogLevel::Debug, "Processing LLM response");
 
-        // FSM guard: ensure we're in LlmStreaming state before processing
         if runtime.state.fsm_state != AgentFsmState::LlmStreaming {
             let fsm_before = runtime.state.fsm_state;
             wasm_log(
@@ -653,10 +669,6 @@ impl AgentRunnerRuntime {
             );
         }
 
-        // logic-hooks: `decide-action` is consulted before the default action
-        // derivation runs. Passthrough keeps the SDK default; an override is
-        // committed as the action result (the same envelope the SDK produces).
-        // A hook error aborts the operation (fail-closed).
         #[cfg(all(feature = "component", target_family = "wasm"))]
         if let Some(override_value) =
             super::logic_hooks::decide_action_override(&runtime.state, llm_response_json)?
@@ -664,9 +676,6 @@ impl AgentRunnerRuntime {
             return serde_json::to_string(&override_value)
                 .map_err(|e| AgentRunnerError::Internal(format!("Failed to encode action: {e}")));
         }
-        // Composed provider passed through. Precedence A1a: consult the
-        // host-supplied `runtime-hooks` at the same pipeline point; it is
-        // skipped entirely when `runtime_hooks_enabled` is false.
         #[cfg(all(feature = "component", target_family = "wasm"))]
         if let Some(override_value) =
             super::runtime_hooks::decide_action_raw_override(&runtime.state, llm_response_json)?

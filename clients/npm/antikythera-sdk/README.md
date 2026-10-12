@@ -41,47 +41,77 @@ const content = prompts.getContent('assistant');
 
 ### WASM via jco component
 
-The browser WASM path is a **composite** WASI component (`wasm32-wasip2`) transpiled with `@bytecodealliance/jco`: the `antikythera-sdk` runner component is composed with the embedded `antikythera-toolrunner` component and the `antikythera-default-hooks` passthrough provider (`wasm-tools compose`), so builtin tools execute inside the module without host round-trip and the pipeline defaults match the SDK alone. Import the `runner` namespace from `antikythera-agent/component`:
+The browser and Node client execute the same WASI Component Model composite
+(`wasm32-wasip2`) used by the Rust and Python Wasmtime hosts. The composite
+contains the SDK runner, tool registry, and default logic hooks. The build
+transpiles it with `@bytecodealliance/jco --instantiation async`.
 
-```javascript
-import { runner } from 'antikythera-agent/component';
-
-// Initialize the agent runner � returns the raw session id (plain string, not JSON)
-const sessionId = runner.init(JSON.stringify({ session_id: 's1' }));
-
-// Get the agent state for a session
-const state = runner.getState(sessionId);
-```
-
-The `runner` namespace exposes 16 camelCase functions (all payloads are JSON strings): `init`, `prepareUserTurn`, `commitLlmResponse`, `commitLlmStream`, `processLlmResponseForSession`, `processToolResultForSession`, `appendLlmChunk`, `drainEvents`, `getState`, `resetSession`, `sweepIdleSessions`, `registerTools`, `getToolsPrompt`, `setContextPolicy`, `getTelemetrySnapshot`, `getSloSnapshot`.
-
-> The composite also imports one host-supplied interface, `antikythera:agent-sdk/runtime-hooks@1.0.0` (runtime pipeline-hook decisions), which `jco` maps to `component/runtime-hooks.js` (default passthrough stub; inject a provider via `globalThis.__ANTIKYTHERA_RUNTIME_HOOKS_PROVIDER__`). For automatic client�server connectivity (LLM proxy, tool routing, hook decisions over HTTP+SSE), use the high-level host runtime: `createAgentRuntime` from `antikythera-agent/runtime` � see `documentation/WIRE_PROTOCOL.md`.
-
-> Note: the transpiled module uses top-level await � set your bundler build target to ES2022 (e.g. Vite `build.target: 'es2022'`).
-
-### Loading the component from a server (`componentBase`)
-
-When the jco bundle is served by an Antikythera server (e.g. the Python
-bridge server) instead of being bundled with this package, point
-`createAgentRuntime` at the bundle directory with `componentBase`:
+Use the high-level runtime for the HTTP/SSE bridge:
 
 ```javascript
 import { createAgentRuntime } from 'antikythera-agent/runtime';
 
 const runtime = await createAgentRuntime({
-  serverUrl: 'http://localhost:8000',
-  componentBase: 'http://localhost:8000/antikythera/v1/component/',
+  core: 'client',
+  serverUrl: 'http://127.0.0.1:8000',
+  timeoutMs: 60000,
+});
+await runtime.connect();
+try {
+  const result = await runtime.runTurn('Hello');
+  console.log(result.content);
+} finally {
+  runtime.close();
+}
+```
+
+Each `createAgentRuntime` call creates a private WASM instance with its own
+sessions, tool registry, and hook imports. Compiled `WebAssembly.Module`
+objects are cached; mutable runner state is never shared between runtimes.
+Hooks must be synchronous and return a JSON decision or a JSON string.
+
+For direct component access, create an isolated runner:
+
+```javascript
+import { createRunner } from 'antikythera-agent/component/instantiate';
+
+const runner = await createRunner();
+const sessionId = runner.init(JSON.stringify({ session_id: 's1' }));
+const state = JSON.parse(runner.getState(sessionId));
+```
+
+The `runner` namespace exposes the existing 16 camelCase WIT functions.
+`antikythera-agent/component` and the global hook-provider helpers remain
+available for legacy singleton consumers. Use the factory for concurrent
+runtimes and independent hooks. If you inject a runner with the `runner`
+option, its instance ownership is the caller's responsibility.
+
+### Loading the component from a server (`componentBase`)
+
+```javascript
+const runtime = await createAgentRuntime({
+  serverUrl: 'http://127.0.0.1:8000',
+  componentBase: 'http://127.0.0.1:8000/antikythera/v1/component/',
 });
 ```
 
-`componentBase` is the absolute URL of the bundle directory; the entry file
-name is resolved from the server manifest (`GET /antikythera/v1/component/manifest`,
-see `documentation/WIRE_PROTOCOL.md` �2.6), so the client never hardcodes the
-server's bundle layout. When `componentBase` is omitted the runtime keeps
-loading the bundled component (default, backward compatible � the no-option
-path makes no network request). Consumers that already hold a runner namespace
-can inject it directly with the `runner` option to skip the import entirely;
-injection takes precedence over `componentBase`.
+The runtime validates the peer's component manifest and loads `instantiate.js`
+and its sibling `factory/` modules from that bundle directory. The server must
+serve the complete bundle generated by the same build pipeline. Browsers can
+import HTTP ESM directly; Node needs a bundler or a local file copy of a remote
+bundle. Node's default ESM loader does not import HTTP URLs.
+
+The bundled path works without `componentBase`. An injected `runner` takes
+precedence over both paths. Configure an ES2022-capable bundler for generated
+component modules. `authToken` supplies the bridge's bearer token; static
+component files remain public so browser module imports can load them.
+
+LLM streaming events are progress notifications. The full HTTP response is
+committed to the runner, including when SSE delivery is partial. Reconnection
+creates a fresh SSE subscription; missed events are not replayed. `cancelTurn()`
+aborts an active HTTP request, and `runTurn(prompt, { signal })` accepts an
+external `AbortSignal`. Local handlers must return before cancellation can
+finish unwinding their turn.
 
 ### Multi-Agent Orchestration
 
@@ -163,7 +193,7 @@ const entries = normalizeLocalTools([search]); // unwrap sugar -> [{definition, 
 | `core/` | Core surface (`PromptManager`, `SessionManager`, `getVersion`) — no wasm |
 | `plugin/` | Plugin surface (`Orchestrator`, `createAgentRuntime`) — wasm-heavy |
 | `orchestrator.js` | Multi-agent `Orchestrator` (requires `serverUrl`; `dispatch` / `dispatchMany` / `pipeline` / `getBudget` / `cancel` / `close`) |
-| `component/` | Composite WASI component (SDK runner + embedded toolrunner + default-hooks) transpiled with jco � ESM bindings, namespace `runner` (camelCase), semantic core-module names (`runner`, `tool-registry`, `logic-hooks-passthrough`, `support-N`) assigned by `src/scripts/post-transpile-rename.mjs`, WASI stubs under `wasi-stubs/` |
+| `component/` | Composite WASI component (SDK runner + embedded toolrunner + default-hooks) transpiled with jco � ESM bindings, namespace `runner` (camelCase), descriptive core-module names for application modules, WASI adapters, import trampolines/fixups, and component ABI adapters in both namespace and isolated factory bundles, assigned by `src/scripts/post-transpile-rename.mjs` (see [module roles](../../../documentation/CORE_MODULE_NAMES.md)), WASI stubs under `wasi-stubs/` |
 | `runtime/` | Host runtime bridge (`createAgentRuntime`) |
 
 ## Requirements
@@ -173,3 +203,13 @@ const entries = normalizeLocalTools([search]); // unwrap sugar -> [{definition, 
 ## License
 
 MIT
+
+
+## Configured-agent delivery
+
+Run a configured agent on the server or export a standalone client environment
+containing its configuration, composed WASM component, jco factory, TypeScript
+declarations, and explicit client tool/hook bindings. Python exposes
+`agent.deployment(agent_id=...)`; TypeScript exposes `createAgentDeployment`.
+See [the delivery guide](../../../documentation/AGENT_DELIVERY.md) for server execution, client export,
+HTTP hosting, and capability placement.

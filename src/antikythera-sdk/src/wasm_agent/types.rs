@@ -28,10 +28,6 @@ pub use prompt_variables::*;
 pub use stream_types::*;
 pub use tool_registry::*;
 
-// ============================================================================
-// Agent Actions
-// ============================================================================
-
 /// Action the agent wants to take
 #[derive(Debug, Clone, Serialize, Deserialize, WasmBridge)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -47,15 +43,6 @@ pub enum AgentAction {
     Retry { error: String },
 }
 
-// ============================================================================
-// Agent FSM States (WASM mirror of core::domain::fsm::AgentFsmState)
-// ============================================================================
-//
-// DESIGN NOTE: This enum is intentionally duplicated from core::domain::fsm
-// because WASM components cannot share Rust enum discriminants across the FFI
-// boundary. The transition matrix MUST be kept in sync with the core copy.
-// See: tests/sdk/wasm_agent/fsm_parity_tests.rs for parity verification.
-
 /// Typed FSM states for the agent loop (WASM mirror of core::domain::fsm::AgentFsmState).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, FsmComplete)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +55,11 @@ pub enum AgentAction {
     ToolResultProcessed => [LlmStreaming, Final, Idle],
     Final => [Idle]
 )]
+/// Agent FSM States (WASM mirror of core::domain::fsm::AgentFsmState) DESIGN NOTE: This enum is
+/// intentionally duplicated from core::domain::fsm because WASM components cannot share Rust enum
+/// discriminants across the FFI boundary. The transition matrix MUST be kept in sync with the
+/// core copy. See: tests/sdk/wasm_agent/fsm_parity_tests.rs for parity verification.
+///
 pub enum AgentFsmState {
     #[default]
     Idle,
@@ -143,10 +135,6 @@ impl std::fmt::Display for FsmTransitionError {
 
 impl std::error::Error for FsmTransitionError {}
 
-// ============================================================================
-// Advanced Context Management
-// ============================================================================
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TruncationStrategy {
@@ -170,10 +158,6 @@ pub struct ContextSummary {
     pub text: String,
     pub source_messages: usize,
 }
-
-// ============================================================================
-// Agent State
-// ============================================================================
 
 /// Agent session state
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,10 +221,6 @@ impl AgentState {
     }
 }
 
-// ============================================================================
-// Messages
-// ============================================================================
-
 /// Message in conversation (for WASM agent)
 #[derive(Debug, Clone, Serialize, Deserialize, WasmBridge)]
 pub struct AgentMessage {
@@ -253,10 +233,6 @@ pub struct AgentMessage {
     /// Optional tool result
     pub tool_result: Option<ToolResult>,
 }
-
-// ============================================================================
-// Agent Configuration
-// ============================================================================
 
 /// Agent behavior config (matches WIT agent-config)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,11 +282,9 @@ impl Default for AgentConfig {
     }
 }
 
-// ============================================================================
-// Conversions from core domain types
-// ============================================================================
-
 #[cfg(feature = "component")]
+/// Conversions from core domain types.
+///
 impl From<antikythera_core::domain::entities::AgentAction> for AgentAction {
     fn from(core_action: antikythera_core::domain::entities::AgentAction) -> Self {
         match core_action {

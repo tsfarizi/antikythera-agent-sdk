@@ -78,6 +78,8 @@ export interface LlmOptions {
 export interface AgentRuntimeOptionsBase {
   /** Base URL of the Antikythera server. */
   serverUrl: string;
+  authToken?: string;
+  timeoutMs?: number;
   /** Opaque client identifier for the SSE control channel. */
   clientId?: string;
   /** Session id for the client core (default: runner-generated). */
@@ -135,6 +137,8 @@ export interface RunnerEvent {
 }
 
 export interface TurnOptions {
+  signal?: AbortSignal;
+  maxSteps?: number;
   systemPrompt?: string;
   forceJson?: boolean;
   metadataJson?: string | null;
@@ -170,6 +174,7 @@ export interface AgentRuntime {
 
 /** Client-core runtime: owns the WASM runner and the tool loop. */
 export interface ClientCoreRuntime extends AgentRuntime {
+  cancelTurn(): boolean;
   /** Auto tool-owner loop: prepare -> LLM proxy -> commit -> drain -> route -> process -> final. */
   runTurn(prompt: string, opts?: TurnOptions): Promise<TurnResult>;
   /** Execute one tool (local gated / server via /tools/execute); returns runner ToolResultInput. */

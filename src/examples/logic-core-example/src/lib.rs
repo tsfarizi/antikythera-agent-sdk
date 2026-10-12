@@ -7,7 +7,7 @@
 //!
 //! The exported `runner` interface is IDENTICAL to the composite SDK's
 //! (the same 16 functions, the same JSON-string semantics in
-//! `contracts/shared/payload_contract.golden.json`), so the swap proof runs
+//! `tests/rust/fixtures/contracts/payload_contract.golden.json`), so the swap proof runs
 //! one host script against both artifacts.
 //!
 //! ## Probe semantics (echo-agent, no LLM)
@@ -15,7 +15,7 @@
 //! | runner function | custom hook | this crate's behavior |
 //! |---|---|---|
 //! | init | [`custom_init`] | `None` → template default: lenient config parse, create/reuse the in-memory session, return the bare session id |
-//! | prepare-user-turn | [`custom_prepare_turn`] | builds the [`PreparedTurn`] envelope with `messages_json` = `[system, user]` from the request |
+//! | prepare-user-turn | [`custom_prepare_turn`] | builds the `PreparedTurn` envelope with `messages_json` = `[system, user]` from the request |
 //! | commit-llm-response | [`custom_commit_response`] | always commits the deterministic final envelope `echo-agent-done` for the session id carried by the prepared turn |
 //! | every other runner function | all remaining `custom_*` hooks | `None` → `Err` not-implemented (template default) |
 //!
@@ -69,7 +69,7 @@ pub fn custom_init(_config_json: &str) -> Option<String> {
 /// }
 /// ```
 ///
-/// Field set matches `contracts/shared/payload_contract.golden.json` and
+/// Field set matches `tests/rust/fixtures/contracts/payload_contract.golden.json` and
 /// `antikythera-sdk/src/wasm_agent/runner/runner_types.rs::PreparedTurn`.
 /// `None` would be the template default (`Err` not-implemented).
 pub fn custom_prepare_turn(request_json: &str) -> Option<String> {

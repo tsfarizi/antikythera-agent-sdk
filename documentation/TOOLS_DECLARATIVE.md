@@ -68,8 +68,8 @@ const search = defineTool({ name: "search", description: "Search the index" }, (
 - `clients/python/antikythera_agent/tools/helpers.py` — `register_tool`, `is_tool`, `extract_tool_entry`
 - `clients/python/antikythera_agent/tools/__init__.py` — re-export facade
 - `clients/npm/antikythera-sdk/runtime/tools.js` — `defineTool`, `isTool`, `extractToolEntry`, `registerTool`
-- `clients/python/tests/test_tools_sugar.py` — falsifikasi CC-1..CC-4 (16 tests)
-- `clients/npm/antikythera-sdk/test/tools.test.mjs` — parity JS (18 tests)
+- `tests/python/test_tools_sugar.py` — falsifikasi CC-1..CC-4 (16 tests)
+- `tests/node/tools.test.mjs` — parity JS (18 tests)
 
 ## Cara Pakai
 
@@ -136,6 +136,6 @@ register_tool(registry, gate, search, allow=True)
 Jalankan test:
 
 ```bash
-pytest clients/python/tests/test_tools_sugar.py -v
-node --test clients/npm/antikythera-sdk/test/tools.test.mjs
+pytest tests/python/test_tools_sugar.py -v
+node --test tests/node/tools.test.mjs
 ```

@@ -17,13 +17,11 @@
 //!   `from_configs` remains only as a compatibility shim that now
 //!   returns an unsupported-operation error)
 
-// ── Always-available modules ────────────────────────────────────────────────
 pub mod host;
 pub mod provider;
 pub mod traits;
 pub mod types;
 
-// ── Re-exports ───────────────────────────────────────────────────────────────
 pub use host::{HostModelClient, HostModelResponse, HostModelTransport};
 pub use provider::DynamicModelProvider;
 pub use traits::ModelProvider;

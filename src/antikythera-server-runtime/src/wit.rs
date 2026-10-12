@@ -25,6 +25,8 @@ use crate::wire::PostbackBody;
 /// Shared state between the wasmtime host functions (core thread) and the
 /// HTTP/SSE layer (tokio workers).
 pub struct SharedState {
+    pub auth_token: Option<String>,
+    pub allowed_origins: Vec<String>,
     pub engine: Arc<wasmtime::Engine>,
     pub policy: Arc<crate::config::GatePolicy>,
     pub control: Arc<ControlChannel>,
@@ -75,8 +77,8 @@ impl SharedState {
         }
         let key = session_id.unwrap_or("default").to_string();
         let mut calls = self.llm_calls.lock().expect("llm calls lock poisoned");
-        if calls.len() > 1024 {
-            calls.clear();
+        if !calls.contains_key(&key) && calls.len() >= 1024 {
+            return Err("permission: llm session capacity exceeded".to_string());
         }
         let used = calls.entry(key).or_insert(0);
         self.policy.check_llm(*used)?;

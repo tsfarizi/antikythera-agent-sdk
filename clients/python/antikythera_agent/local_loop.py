@@ -28,6 +28,7 @@ Amplop runtime:
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -72,6 +73,7 @@ class LocalLoopConfig:
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     prompts: Optional[List[str]] = None
+    runtime_hooks_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.session_id, str):
@@ -90,9 +92,10 @@ class LocalLoopConfig:
             raise ValueError("local loop: timeout must be a non-negative integer")
         if not isinstance(self.force_json, bool):
             raise ValueError("local loop: force_json must be a bool")
+        if not isinstance(self.runtime_hooks_enabled, bool):
+            raise ValueError("local loop: runtime_hooks_enabled must be a bool")
         if self.temperature is not None and (
-            not isinstance(self.temperature, (int, float))
-            or isinstance(self.temperature, bool)
+            not isinstance(self.temperature, (int, float)) or isinstance(self.temperature, bool)
         ):
             raise ValueError("local loop: temperature must be a number or None")
         if self.max_tokens is not None and (
@@ -120,9 +123,7 @@ class LoopOutcome:
     drained_events: Optional[List[Any]] = None
 
 
-def _execute_local(
-    registry: Any, tool: str, tool_input: Any, step_id: int
-) -> Dict[str, Any]:
+def _execute_local(registry: Any, tool: str, tool_input: Any, step_id: int) -> Dict[str, Any]:
     """Eksekusi tool owner `server`: handler lokal; kegagalan handler adalah
     hasil `success=false`, bukan error (mirror `routing.rs::execute_local` via
     `loop_owner._execute_local`)."""
@@ -167,12 +168,15 @@ def _route_local_tool(
 ) -> Dict[str, Any]:
     """Routing satu tool non-in-band, dibatasi owner `server` (mirror
     `loop_owner._execute_tool` tanpa branch control/mcp): resolusi owner ->
-    gate check SEBELUM eksekusi (default-deny R4) -> dispatch lokal."""
+    gate check SEBELUM eksekusi (default-deny R4) -> dispatch lokal.
+
+
+    Gate check sebelum dispatch; denial (`permission:` prefix) meluas apa adanya sebagai error
+    loop — bukan degradasi senyap.
+    """
     owner = registry.owner_of(tool) if registry is not None else None
     if owner is None:
         raise ToolLoopError(f"{_PERMISSION_PREFIX} tool '{tool}' not in allowlist")
-    # Gate check sebelum dispatch; denial (`permission:` prefix) meluas apa
-    # adanya sebagai error loop — bukan degradasi senyap.
     gate.check_tool(owner, tool)
     if owner != wire.WIRE["OWNER_SERVER"]:
         raise ToolLoopError(
@@ -188,6 +192,9 @@ def run_local_loop(
     registry: Any,
     gate: Any,
     config: LocalLoopConfig,
+    *,
+    cancel_event: Any = None,
+    on_step: Optional[Callable[[int], None]] = None,
 ) -> LoopOutcome:
     """Jalankan local tool loop (blocking; mirror `run_tool_loop` Wave 1).
 
@@ -208,22 +215,27 @@ def run_local_loop(
             retry / denial routing.
         PermissionDeniedError: denial gate (`permission:` prefix).
         WasmRuntimeError: kegagalan panggilan runner.
+
+
+    Init mengembalikan string session-id polos (mod.rs:203 — dibuat runner bila payload tidak
+    menyertakan session_id).
+
+    Kontrak timeout E1.3: ms config -> detik atribut provider.
+
+    Builtin in-band: komposit mengeksekusi builtin di dalam commit dan mengemisi tool_result
+    ke drain — host TIDAK mengeksekusi lagi (tanpa double execution, invariant U23).
     """
     if provider_resolver is not None and not callable(provider_resolver):
-        raise TypeError(
-            "local loop: provider must be a callable resolver (name) -> LlmProvider"
-        )
+        raise TypeError("local loop: provider must be a callable resolver (name) -> LlmProvider")
     resolver = resolve_provider if provider_resolver is None else provider_resolver
 
     config_payload: Dict[str, Any] = {
         "max_steps": config.max_steps,
         "auto_execute_tools": False,
-        "runtime_hooks_enabled": False,
+        "runtime_hooks_enabled": config.runtime_hooks_enabled,
     }
     if config.session_id:
         config_payload["session_id"] = config.session_id
-    # init mengembalikan string session-id polos (mod.rs:203 — dibuat runner
-    # bila payload tidak menyertakan session_id).
     session_id = runtime.call("init", json.dumps(config_payload))
     if not isinstance(session_id, str) or not session_id:
         raise ToolLoopError("local loop: init did not return a session id")
@@ -234,6 +246,8 @@ def run_local_loop(
     prompts = config.prompts or []
     step = 0
     while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ToolLoopError("local loop: cancelled")
         if step >= config.max_steps:
             raise ToolLoopError(
                 f"local loop: max_steps ({config.max_steps}) exceeded without final action"
@@ -264,8 +278,13 @@ def run_local_loop(
             }
         )
         try:
+            if on_step is not None:
+                on_step(step + 1)
             provider = resolver(config.provider)
-            # Kontrak timeout E1.3: ms config -> detik atribut provider.
+            from antikythera_agent.server.provider import OllamaProvider, OpenAiProvider
+
+            if isinstance(provider, (OllamaProvider, OpenAiProvider)):
+                provider = copy.copy(provider)
             if hasattr(provider, "timeout"):
                 provider.timeout = config.timeout / 1000
             raw_response = provider.call(llm_request)
@@ -273,6 +292,8 @@ def run_local_loop(
         except Exception as exc:
             raise ToolLoopError(f"local loop: llm call failed: {exc}") from exc
 
+        if cancel_event is not None and cancel_event.is_set():
+            raise ToolLoopError("local loop: cancelled")
         commit_json = _parse_json(
             runtime.call(
                 "commit_llm_response",
@@ -300,9 +321,6 @@ def run_local_loop(
             tool_input = commit_json.get("tool_input")
             step_id = commit_json.get("step") or 0
 
-            # Builtin in-band: komposit mengeksekusi builtin di dalam commit
-            # dan mengemisi tool_result ke drain — host TIDAK mengeksekusi
-            # lagi (tanpa double execution, invariant U23).
             in_band = isinstance(events, list) and any(
                 isinstance(event, dict)
                 and event.get("kind") == "tool_result"
@@ -311,6 +329,8 @@ def run_local_loop(
             )
 
             if not in_band:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ToolLoopError("local loop: cancelled")
                 wire_result = _route_local_tool(registry, gate, tool, tool_input, step_id)
                 correlation_id = commit_json.get("correlation_id")
                 runner_input = wire.wire_to_runner_tool_result(wire_result, correlation_id)

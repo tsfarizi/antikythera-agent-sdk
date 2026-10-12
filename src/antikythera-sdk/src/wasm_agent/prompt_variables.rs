@@ -1,9 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Prompt Types
-// ============================================================================
-
 /// Prompt template variables
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PromptVariables {

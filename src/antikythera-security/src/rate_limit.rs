@@ -7,10 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
 /// Rate limit error.
 #[derive(Debug, Clone, Error)]
 pub enum RateLimitError {
@@ -24,10 +20,6 @@ pub enum RateLimitError {
     #[error("Too many concurrent sessions: {current}/{max}")]
     TooManyConcurrentSessions { max: u32, current: u32 },
 }
-
-// ---------------------------------------------------------------------------
-// Internal sliding window
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 struct TimeWindow {
@@ -74,10 +66,6 @@ impl TimeWindow {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Per-session bookkeeping
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 struct SessionLimits {
     minute_window: TimeWindow,
@@ -85,10 +73,6 @@ struct SessionLimits {
     day_window: TimeWindow,
     last_activity: Instant,
 }
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
 
 /// Per-session usage statistics.
 #[derive(Debug, Clone)]
@@ -98,10 +82,6 @@ pub struct SessionUsage {
     pub requests_per_day: u32,
     pub last_activity: Instant,
 }
-
-// ---------------------------------------------------------------------------
-// RateLimiter
-// ---------------------------------------------------------------------------
 
 /// Configurable rate limiter with sliding-window counters.
 pub struct RateLimiter {
@@ -152,7 +132,6 @@ impl RateLimiter {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
 
-        // Concurrent session gate
         if limits.len() as u32 >= self.config.max_concurrent_sessions
             && !limits.contains_key(session_id)
         {
@@ -314,20 +293,17 @@ impl Drop for RateLimiter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// antikythera_ports::RateLimiter implementation
-// ---------------------------------------------------------------------------
-
 #[async_trait::async_trait]
 impl antikythera_ports::RateLimiter for RateLimiter {
     async fn check_rate_limit(&self, key: &str) -> Result<(), String> {
         self.check(key).map_err(|e| e.to_string())
     }
 
+    /// Check() already records the request inside each TimeWindow::check(). A dedicated
+    /// record-only path is not needed; the port contract is satisfied by calling check which both
+    /// validates and records.
+    ///
     async fn record_request(&self, key: &str) {
-        // check() already records the request inside each TimeWindow::check().
-        // A dedicated record-only path is not needed; the port contract is
-        // satisfied by calling check which both validates and records.
         let _ = self.check(key);
     }
 }
