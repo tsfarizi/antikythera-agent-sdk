@@ -72,6 +72,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p antikythera-sdk --target wasm32-wasip2 --no-default-features --features component
 
+  storage-features-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile feature-gated storage surfaces
+        run: cargo check -p antikythera-storage --features mongodb,postgres,standalone,sse
+
   contract-tests:
     runs-on: ubuntu-latest
     steps:
@@ -96,7 +105,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install mdbook
-      - run: mdbook build
+      - run: node src/scripts/build-docs.mjs
 
   web-check:
     runs-on: ubuntu-latest

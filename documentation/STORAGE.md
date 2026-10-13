@@ -166,7 +166,8 @@ core_url = "http://127.0.0.1:8080"
 | `postgres` | PostgreSQL backend |
 | `standalone` | REST API server mode |
 | `sse` | SSE backup service |
-| `wasm` | WASM component integration |
+
+CI compiles every feature-gated surface (`cargo check -p antikythera-storage --features mongodb,postgres,standalone,sse`) so the non-default backends cannot rot unnoticed. Runtime exercise for the MongoDB and PostgreSQL backends requires live servers; the default test matrix covers the filesystem backend only.
 
 ## Module Structure
 

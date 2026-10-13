@@ -330,14 +330,15 @@ Reference flow: `examples/antikythera-web` (`src/slices/chat/flow/send-message.t
 
 ## Docs site build
 
-The repository also includes an `mdBook` configuration that turns `README.md` plus the `documentation/` folder into a static documentation site.
+The repository also includes an `mdBook` configuration that turns `README.md` plus the `documentation/` folder into a static documentation site. Because `book.toml` uses `src = "."`, the renderer would otherwise copy every non-markdown file under the repository root into the site; the build therefore stages only the book inputs (`book.toml`, `SUMMARY.md`, `README.md`, `documentation/`, `theme/`) into `.runtime-build/book-src/` and renders there.
 
 ```mermaid
 flowchart LR
     README[README.md] --> SUMMARY[SUMMARY.md]
     DOCS[documentation/*.md] --> SUMMARY
-    SUMMARY --> MDBOOK[mdbook build]
-    MDBOOK --> SITE[book/]
+    SUMMARY --> STAGE[stage book inputs]
+    STAGE --> MDBOOK[mdbook build]
+    MDBOOK --> SITE[.runtime-build/book-src/book]
     SITE --> PAGES[GitHub Pages deployment]
 ```
 
@@ -345,10 +346,10 @@ flowchart LR
 
 ```bash
 # Build static site
-mdbook build
+node src/scripts/build-docs.mjs
 
 # Preview locally
-mdbook serve --open
+node src/scripts/build-docs.mjs --serve
 ```
 
 ## Tests and quality checks

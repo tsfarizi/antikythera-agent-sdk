@@ -32,12 +32,12 @@ jobs:
           tool: mdbook
 
       - name: Build mdBook site
-        run: mdbook build
+        run: node src/scripts/build-docs.mjs
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'book'
+          path: '.runtime-build/book-src/book'
 
   deploy:
     runs-on: ubuntu-latest

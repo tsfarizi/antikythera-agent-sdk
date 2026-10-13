@@ -405,12 +405,25 @@ test("Python-configured agent exports run with jco against the same Python provi
       }, 20000);
       child.stdout.on("data", (chunk) => {
         output += chunk;
-        if (output.includes("\n")) {
-          clearTimeout(timer);
+        /**
+         * The helper prints its startup JSON only after writing the bundle, so the
+         * first stdout lines may belong to unrelated diagnostics. Scan complete
+         * lines until the host descriptor (`url` + `clientUrl`) arrives instead of
+         * trusting the first line.
+         */
+        const lines = output.split("\n");
+        output = lines.pop() ?? "";
+        for (const line of lines) {
+          let parsed;
           try {
-            resolve(JSON.parse(output.split("\n")[0]));
-          } catch (error) {
-            reject(error);
+            parsed = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (typeof parsed?.url === "string" && typeof parsed?.clientUrl === "string") {
+            clearTimeout(timer);
+            resolve(parsed);
+            return;
           }
         }
       });
