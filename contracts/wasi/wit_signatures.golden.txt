@@ -1,0 +1,43 @@
+append-llm-chunk: func(session-id: string, chunk: string, correlation-id: option<string>) -> result<bool, string>
+call-llm: func(request: llm-request) -> result<llm-response, string>
+commit-llm-response: func(prepared-turn-json: string, llm-response-json: string) -> result<string, string>
+commit-llm-stream: func(prepared-turn-json: string) -> result<string, string>
+drain-events: func(session-id: string) -> result<string, string>
+emit-tool-call: func(event: tool-call-event) -> result<tool-execution-result, string>
+execute-builtin: func(tool-name: string, arguments-json: string, step-id: u32) -> result<string, string>
+ffi-server { start: func(bind-address: string) -> result<_, string>, stop: func() -> result<_, string> }
+get-prompt: func(prompt-id: string) -> result<option<string>, string>
+get-slo-snapshot: func(session-id: string) -> result<string, string>
+get-state: func(session-id: string) -> result<string, string>
+get-telemetry-snapshot: func(session-id: string) -> result<string, string>
+get-tools-prompt: func() -> result<string, string>
+init: func(config-json: string) -> result<string, string>
+invoke-tool: func(server-id: string, tool-name: string, input-json: string) -> result<tool-execution-result, string>
+list-prompts: func() -> result<list<string>, string>
+list-tools: func(server-id: string) -> result<list<tool-call-event>, string>
+list-tools-json: func() -> result<string, string>
+load-state: func(context-id: string) -> result<option<string>, string>
+log-message: func(event: log-event)
+mcp-client { list-tools: func(server-id: string) -> result<list<tool-call-event>, string>, invoke-tool: func(server-id: string, tool-name: string, input-json: string) -> result<tool-execution-result, string> }
+prepare-user-turn: func(request-json: string) -> result<string, string>
+process-llm-response-for-session: func(session-id: string, llm-response-json: string) -> result<string, string>
+process-tool-result-for-session: func(session-id: string, tool-result-json: string) -> result<string, string>
+prompt-manager { get-prompt: func(prompt-id: string) -> result<option<string>, string>, list-prompts: func() -> result<list<string>, string> }
+record delegating-agent { host: string, session-id: option<string>, step-counter: u32, max-steps: u32 }
+record llm-request { provider: option<string>, model: option<string>, session-id: option<string>, messages-json: string, force-json: bool, temperature: option<f32>, max-tokens: option<u32>, schema-name: option<string>, metadata-json: option<string> }
+record llm-response { content: string, model: option<string>, session-id: option<string>, message-json: option<string>, tokens-used: option<u32>, finish-reason: option<string>, raw-response-json: option<string> }
+record log-event { level: string, message: string, timestamp: option<string> }
+record tool-call-event { tool-name: string, arguments-json: string, session-id: option<string>, step-id: u32 }
+record tool-execution-result { tool-name: string, success: bool, output-json: string, error-message: option<string>, step-id: u32 }
+register-tools: func(tools-json: string) -> result<u32, string>
+reset-session: func(session-id: string) -> result<bool, string>
+runner { init: func(config-json: string) -> result<string, string>, prepare-user-turn: func(request-json: string) -> result<string, string>, commit-llm-response: func(prepared-turn-json: string, llm-response-json: string) -> result<string, string>, commit-llm-stream: func(prepared-turn-json: string) -> result<string, string>, process-llm-response-for-session: func(session-id: string, llm-response-json: string) -> result<string, string>, process-tool-result-for-session: func(session-id: string, tool-result-json: string) -> result<string, string>, append-llm-chunk: func(session-id: string, chunk: string, correlation-id: option<string>) -> result<bool, string>, drain-events: func(session-id: string) -> result<string, string>, get-state: func(session-id: string) -> result<string, string>, reset-session: func(session-id: string) -> result<bool, string>, sweep-idle-sessions: func(now-unix-ms: option<s64>) -> result<u32, string>, register-tools: func(tools-json: string) -> result<u32, string>, get-tools-prompt: func() -> result<string, string>, set-context-policy: func(policy-json: string) -> result<bool, string>, get-telemetry-snapshot: func(session-id: string) -> result<string, string>, get-slo-snapshot: func(session-id: string) -> result<string, string> }
+save-state: func(context-id: string, state-json: string) -> result<_, string>
+set-context-policy: func(policy-json: string) -> result<bool, string>
+start: func(bind-address: string) -> result<_, string>
+stop: func() -> result<_, string>
+sweep-idle-sessions: func(now-unix-ms: option<s64>) -> result<u32, string>
+tool-registry { list-tools-json: func() -> result<string, string>, validate-tool-call: func(tool-name: string, arguments-json: string) -> result<_, string>, execute-builtin: func(tool-name: string, arguments-json: string, step-id: u32) -> result<string, string> }
+validate-tool-call: func(tool-name: string, arguments-json: string) -> result<_, string>
+world antikythera-agent-sdk { import tool-registry; export runner; }
+world tool-registry-component { export tool-registry; }

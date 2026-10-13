@@ -1,0 +1,23 @@
+# Browser WASM contract — golden exported-function signatures
+# Target: WASI component (wasm32-wasip1) transpiled to JS bindings with jco.
+# Namespace: `runner` (exported by world antikythera-agent-sdk).
+# Source of truth: npm/antikythera-sdk/component/interfaces/antikythera-agent-sdk-runner.d.ts
+# Format: name(param: type, ...): return  — one signature per line, camelCase (jco naming).
+# All payloads are JSON strings; WIT option<T> renders as `T | undefined` in the jco d.ts.
+# Mechanically verified by: tests/compatibility_tests.rs :: browser_type_signatures_match_golden
+appendLlmChunk(sessionId: string, chunk: string, correlationId: string | undefined): boolean
+commitLlmResponse(preparedTurnJson: string, llmResponseJson: string): string
+commitLlmStream(preparedTurnJson: string): string
+drainEvents(sessionId: string): string
+getSloSnapshot(sessionId: string): string
+getState(sessionId: string): string
+getTelemetrySnapshot(sessionId: string): string
+getToolsPrompt(): string
+init(configJson: string): string
+prepareUserTurn(requestJson: string): string
+processLlmResponseForSession(sessionId: string, llmResponseJson: string): string
+processToolResultForSession(sessionId: string, toolResultJson: string): string
+registerTools(toolsJson: string): number
+resetSession(sessionId: string): boolean
+setContextPolicy(policyJson: string): boolean
+sweepIdleSessions(nowUnixMs: bigint | undefined): number
