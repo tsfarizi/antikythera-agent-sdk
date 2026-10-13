@@ -11,6 +11,10 @@ import time
 import urllib.request
 from typing import Any
 
+# subprocess.CREATE_NO_WINDOW is a Windows-only flag; the attribute does not
+# exist on other platforms, so it must be resolved dynamically.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 class McpClient:
     def __init__(self, config: dict[str, Any]):
@@ -41,7 +45,7 @@ class McpClient:
                 encoding="utf-8",
                 bufsize=1,
                 env={**os.environ, **(config.get("env") or {})},
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                creationflags=_CREATE_NO_WINDOW,
             )
             process = self.process
             assert process.stdout is not None

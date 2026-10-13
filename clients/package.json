@@ -5,7 +5,7 @@
     "test:types": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext --moduleResolution bundler ../tests/typescript/delivery.ts"
   },
   "devDependencies": {
-    "@bytecodealliance/jco": "^1.27.0",
+    "@bytecodealliance/jco": "1.27.0",
     "typescript": "5.9.3"
   }
 }

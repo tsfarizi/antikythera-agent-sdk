@@ -100,7 +100,9 @@ def _install_export(source: Path, target: Path) -> None:
             source.rename(target)
             return
         except PermissionError as exc:
-            if os.name != "nt" or exc.winerror not in (5, 32, 33) or attempt == 5:
+            # PermissionError.winerror exists only on Windows.
+            winerror = getattr(exc, "winerror", None)
+            if os.name != "nt" or winerror not in (5, 32, 33) or attempt == 5:
                 raise
             time.sleep(0.04 * 2**attempt)
 
