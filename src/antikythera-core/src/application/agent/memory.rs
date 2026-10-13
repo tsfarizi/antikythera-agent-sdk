@@ -23,6 +23,12 @@
 //! - `MemoryProvider` — async trait that a host-side adapter can implement
 //! - `MemoryError` — error variants shared by the trait and snapshot types
 
+// async_trait emits a message-less `#[must_use]` on async trait methods; the
+// generated boxed future is itself `#[must_use]`, so clippy::double_must_use
+// fires on every async method here. The attribute lives inside the macro
+// expansion and cannot carry a message from this side.
+#![allow(clippy::double_must_use)]
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

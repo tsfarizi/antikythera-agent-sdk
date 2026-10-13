@@ -12,14 +12,14 @@ Antikythera is a **Rust-based MCP client framework** designed to:
 - expose agent logic as a portable **server-side WASM component** (wasm32-wasip2)
 - support multiple LLM providers (Ollama, OpenAI, Gemini) via feature-gated facade
 
-No C FFI is provided by the framework. The SDK core crates do not embed an HTTP server — the Runtime Bridge ships one as a separate deployment binary (`src/antikythera-server-runtime`, HTTP + SSE). Browser WASM is supported through the **WASI component transpiled with jco** (`clients/npm/antikythera-sdk/component/`, namespace `runner`). A host that embeds the WASM component is responsible for its own transport layer (REST, gRPC, WebSocket, or custom) — or reuses the Runtime Bridge wire protocol (`WIRE_PROTOCOL.md`).
+No C FFI is provided by the framework. The SDK core crates do not embed an HTTP server â€” the Runtime Bridge ships one as a separate deployment binary (`src/antikythera-server-runtime`, HTTP + SSE). Browser WASM is supported through the **WASI component transpiled with jco** (`clients/npm/antikythera-sdk/component/`, namespace `runner`). A host that embeds the WASM component is responsible for its own transport layer (REST, gRPC, WebSocket, or custom) â€” or reuses the Runtime Bridge wire protocol (`WIRE_PROTOCOL.md`).
 
 ## Deployment targets
 
 | Target | Build command | Output |
 |:-------|:-------------|:-------|
 | **Framework crates** | `cargo build --workspace` | Library crates |
-| **Server-side WASM component** (composite) | `task build` — SDK + toolrunner + default-hooks components + `wasm-tools compose` ? `dist/antikythera-sdk.wasm` | `.wasm` component (exports `runner`; imports exactly one non-WASI interface — `runtime-hooks` — plus WASI) |
+| **Server-side WASM component** (composite) | `task build` â€” SDK + toolrunner + default-hooks components + `wasm-tools compose` ? `dist/antikythera-sdk.wasm` | `.wasm` component (exports `runner`; imports exactly one non-WASI interface â€” `runtime-hooks` â€” plus WASI) |
 | **Browser JS bindings** | `npx jco transpile dist/antikythera-sdk.wasm --out-dir clients/npm/antikythera-sdk/component` | ESM module (namespace `runner`) |
 
 ## Public SDK surface
@@ -66,7 +66,7 @@ The WASM component handles agent reasoning, session continuity, history shaping,
 
 | Flag | Purpose | Status |
 |:-----|:--------|:-------|
-| `component` | WASM Component Model support (wasm32-wasip2 WASI) — basis untuk server dan browser-via-jco | Active |
+| `component` | WASM Component Model support (wasm32-wasip2 WASI) â€” basis untuk server dan browser-via-jco | Active |
 | `toolrunner` | In-process tool execution via `antikythera-toolrunner` | Active |
 | `wasm-sandbox` | Wasmtime-based sandbox execution | Active |
 
@@ -124,7 +124,7 @@ The WASM component handles agent reasoning, session continuity, history shaping,
 
 ## Related documents
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — crate relationships and request flow
-- [`BUILD.md`](BUILD.md) — build commands for each target
-- [`COMPONENT.md`](COMPONENT.md) — WASM component model details
-- [`WASM_AGENT.md`](WASM_AGENT.md) — agent logic inside the component
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) â€” crate relationships and request flow
+- [`BUILD.md`](BUILD.md) â€” build commands for each target
+- [`COMPONENT.md`](COMPONENT.md) â€” WASM component model details
+- [`WASM_AGENT.md`](WASM_AGENT.md) â€” agent logic inside the component

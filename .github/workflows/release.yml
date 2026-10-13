@@ -41,12 +41,12 @@ jobs:
       - name: Install cargo-component
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-component
+          tool: cargo-component@0.21.1
 
       - name: Install wasm-tools
         uses: taiki-e/install-action@v2
         with:
-          tool: wasm-tools
+          tool: wasm-tools@1.261.0
 
       - name: Verify release version matches Cargo workspace version
         run: |
@@ -154,12 +154,12 @@ jobs:
           echo "CFLAGS_wasm32_wasip2=--sysroot=/opt/share/wasi-sysroot" >> $GITHUB_ENV
 
       - name: Install cargo-component
-        run: cargo install cargo-component
+        run: cargo install cargo-component --version 0.21.1 --locked
 
       - name: Install wasm-tools
         uses: taiki-e/install-action@v2
         with:
-          tool: wasm-tools
+          tool: wasm-tools@1.261.0
 
       - name: Build SDK component
         run: cargo build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component

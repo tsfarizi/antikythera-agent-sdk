@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "antikythera-agent": "file:../../npm/antikythera-sdk",
+    "antikythera-agent": "file:../../../clients/npm/antikythera-sdk",
     "marked": "^18.0.7",
     "vue": "^3.5.13"
   },

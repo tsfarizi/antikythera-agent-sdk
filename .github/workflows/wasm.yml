@@ -25,12 +25,12 @@ jobs:
       - name: Install cargo-component
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-component
+          tool: cargo-component@0.21.1
 
       - name: Install wasm-tools
         uses: taiki-e/install-action@v2
         with:
-          tool: wasm-tools
+          tool: wasm-tools@1.261.0
 
       - name: Validate WIT conformance
         run: cargo run -p build-scripts --release -- validate

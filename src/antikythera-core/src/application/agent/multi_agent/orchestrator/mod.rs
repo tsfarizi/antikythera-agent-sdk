@@ -81,7 +81,7 @@ async fn prepare_dispatch(
     budget: &OrchestratorBudget,
     default_retry_condition: &RetryCondition,
     concurrency_sem: &Option<Arc<Semaphore>>,
-) -> Result<DispatchPrepared, TaskResult> {
+) -> Result<DispatchPrepared, Box<TaskResult>> {
     if task.retry_policy.is_none() {
         task.retry_policy = Some(TaskRetryPolicy {
             max_retries: 0,
@@ -98,7 +98,7 @@ async fn prepare_dispatch(
             error_kind: Some(ErrorKind::BudgetExhausted),
             ..TaskExecutionMetadata::default()
         };
-        return Err(TaskResult::failure_with_kind(
+        return Err(Box::new(TaskResult::failure_with_kind(
             task.task_id.clone(),
             task.agent_id.clone().unwrap_or_default(),
             format!(
@@ -107,7 +107,7 @@ async fn prepare_dispatch(
             ),
             ErrorKind::BudgetExhausted,
         )
-        .with_metadata(meta));
+        .with_metadata(meta)));
     }
 
     if budget.is_step_budget_exhausted() {
@@ -117,7 +117,7 @@ async fn prepare_dispatch(
             error_kind: Some(ErrorKind::BudgetExhausted),
             ..TaskExecutionMetadata::default()
         };
-        return Err(TaskResult::failure_with_kind(
+        return Err(Box::new(TaskResult::failure_with_kind(
             task.task_id.clone(),
             task.agent_id.clone().unwrap_or_default(),
             format!(
@@ -127,7 +127,7 @@ async fn prepare_dispatch(
             ),
             ErrorKind::BudgetExhausted,
         )
-        .with_metadata(meta));
+        .with_metadata(meta)));
     }
 
     let concurrency_wait_start = Instant::now();
@@ -357,7 +357,7 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
         .await
         {
             Ok(p) => p,
-            Err(result) => return result,
+            Err(result) => return *result,
         };
         let task = prepared.task;
 
@@ -497,7 +497,7 @@ impl<P: ModelProvider + 'static> MultiAgentOrchestrator<P> {
                     .await
                     {
                         Ok(p) => p,
-                        Err(result) => return result,
+                        Err(result) => return *result,
                     };
                     let task = prepared.task;
 

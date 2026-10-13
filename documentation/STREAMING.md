@@ -36,7 +36,7 @@ Provider parsers emit one of three variants:
 - Only one sink is active at a time; `set_stream_event_sink` replaces any previous sink.
 - `clear_stream_event_sink` drops the sender, cleanly ending the mpsc channel after each response.
 - `Started` and `Completed` events are forwarded to `tracing::info!` for the log panel under the `cli:streaming` source label.
-- `Chunk` events are not traced — they are too frequent and their content is visible in the chat panel.
+- `Chunk` events are not traced â€” they are too frequent and their content is visible in the chat panel.
 
 ## Building your own streaming host
 
@@ -48,4 +48,4 @@ Host applications can implement streaming by:
 
 ## Related documents
 
-- [`SERVERS_AND_AGENTS.md`](SERVERS_AND_AGENTS.md) — server and agent management
+- [`SERVERS_AND_AGENTS.md`](SERVERS_AND_AGENTS.md) â€” server and agent management

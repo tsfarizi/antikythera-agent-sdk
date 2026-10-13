@@ -53,42 +53,42 @@ flowchart TD
 
 | Crate | Role |
 |:------|:-----|
-| `src/antikythera-domain` | Canonical domain types (entities, sessions, FSM, validation) — zero internal deps |
-| `src/antikythera-ports` | Port trait definitions (hexagonal architecture) — depends on domain |
+| `src/antikythera-domain` | Canonical domain types (entities, sessions, FSM, validation) â€” zero internal deps |
+| `src/antikythera-ports` | Port trait definitions (hexagonal architecture) â€” depends on domain |
 
 ### Layer 1: Implementations
 
 | Crate | Role |
 |:------|:-----|
-| `src/antikythera-config` | Configuration schema and loading — depends on domain |
-| `src/antikythera-log` | Structured logging and subscriptions — standalone |
-| `src/antikythera-resilience` | Retry, timeout, context window, and health tracking — depends on domain |
-| `src/antikythera-tooling` | MCP tool server management — depends on domain, config |
-| `src/antikythera-observability` | In-memory observability implementations — depends on domain, ports |
-| `src/antikythera-security` | Validation, rate limiting, secrets management — depends on domain, ports |
-| `src/antikythera-storage` | Session persistence with pluggable backends — depends on domain |
+| `src/antikythera-config` | Configuration schema and loading â€” depends on domain |
+| `src/antikythera-log` | Structured logging and subscriptions â€” standalone |
+| `src/antikythera-resilience` | Retry, timeout, context window, and health tracking â€” depends on domain |
+| `src/antikythera-tooling` | MCP tool server management â€” depends on domain, config |
+| `src/antikythera-observability` | In-memory observability implementations â€” depends on domain, ports |
+| `src/antikythera-security` | Validation, rate limiting, secrets management â€” depends on domain, ports |
+| `src/antikythera-storage` | Session persistence with pluggable backends â€” depends on domain |
 
 ### Layer 2: Core
 
 | Crate | Role |
 |:------|:-----|
-| `src/antikythera-core` | Core MCP runtime, agent logic, transports — depends on domain, ports, config, log, resilience, tooling, observability |
-| `src/antikythera-session` | Session management with persistent chat history — depends on domain, log |
+| `src/antikythera-core` | Core MCP runtime, agent logic, transports â€” depends on domain, ports, config, log, resilience, tooling, observability |
+| `src/antikythera-session` | Session management with persistent chat history â€” depends on domain, log |
 
 ### Layer 3: Providers
 
 | Crate | Role |
 |:------|:-----|
-| `src/antikythera-provider-ollama` | Ollama LLM provider — depends on domain, core |
-| `src/antikythera-provider-openai` | OpenAI LLM provider — depends on domain, core |
-| `src/antikythera-provider-gemini` | Google Gemini LLM provider — depends on domain, core |
+| `src/antikythera-provider-ollama` | Ollama LLM provider â€” depends on domain, core |
+| `src/antikythera-provider-openai` | OpenAI LLM provider â€” depends on domain, core |
+| `src/antikythera-provider-gemini` | Google Gemini LLM provider â€” depends on domain, core |
 
 ### Layer 4: SDK & Facade
 
 | Crate | Role |
 |:------|:-----|
-| `src/antikythera-sdk` | Public API layer for Rust and WASM component bindings — depends on core, log, session |
-| `src/antikythera-facade` | High-level API with provider selection (Ollama/OpenAI/Gemini) — depends on core, domain, log |
+| `src/antikythera-sdk` | Public API layer for Rust and WASM component bindings â€” depends on core, log, session |
+| `src/antikythera-facade` | High-level API with provider selection (Ollama/OpenAI/Gemini) â€” depends on core, domain, log |
 
 ### Layer 5: Deployment
 
@@ -96,7 +96,7 @@ flowchart TD
 |:------|:-----|
 | `src/plugin/antikythera-toolrunner` | In-process tool execution and standalone WASM tool-registry component (composed into the SDK deliverable) |
 | `src/plugin/antikythera-default-hooks` | Default no-op logic-hooks implementation (composed into the SDK deliverable) |
-| `src/antikythera-server-runtime` | Server host runtime for the WASM composite — wasmtime core + HTTP/SSE wire bridge (lib + bin) |
+| `src/antikythera-server-runtime` | Server host runtime for the WASM composite â€” wasmtime core + HTTP/SSE wire bridge (lib + bin) |
 
 ### Supporting directories
 
@@ -133,42 +133,42 @@ cargo clippy --workspace --lib --bins -- -D warnings -D deprecated
 
 ### Framework
 
-- [Architecture](documentation/ARCHITECTURE.md) — crate relationships and request flow
-- [Workspace](documentation/WORKSPACE.md) — repository organization and crate responsibilities
-- [Product Scope](documentation/PRODUCT_SCOPE.md) — deployment targets and feature flags
-- [Build](documentation/BUILD.md) — build commands for each target
-- [Config](documentation/CONFIG.md) — configuration format and loading
-- [Component](documentation/COMPONENT.md) — WASM component model details
+- [Architecture](documentation/ARCHITECTURE.md) â€” crate relationships and request flow
+- [Workspace](documentation/WORKSPACE.md) â€” repository organization and crate responsibilities
+- [Product Scope](documentation/PRODUCT_SCOPE.md) â€” deployment targets and feature flags
+- [Build](documentation/BUILD.md) â€” build commands for each target
+- [Config](documentation/CONFIG.md) â€” configuration format and loading
+- [Component](documentation/COMPONENT.md) â€” WASM component model details
 
 ### Runtime
 
-- [Servers and Agents](documentation/SERVERS_AND_AGENTS.md) — server and agent management
-- [Streaming](documentation/STREAMING.md) — token/event streaming behavior
-- [Resilience](documentation/RESILIENCE.md) — retry, timeout, and health tracking
-- [Guardrails](documentation/GUARDRAILS.md) — runtime hardening controls
-- [Hooks](documentation/HOOKS.md) — host integration hooks
-- [Context Management](documentation/CONTEXT_MANAGEMENT.md) — context window management
+- [Servers and Agents](documentation/SERVERS_AND_AGENTS.md) â€” server and agent management
+- [Streaming](documentation/STREAMING.md) â€” token/event streaming behavior
+- [Resilience](documentation/RESILIENCE.md) â€” retry, timeout, and health tracking
+- [Guardrails](documentation/GUARDRAILS.md) â€” runtime hardening controls
+- [Hooks](documentation/HOOKS.md) â€” host integration hooks
+- [Context Management](documentation/CONTEXT_MANAGEMENT.md) â€” context window management
 
 ### Reference
 
-- [Logging](documentation/LOGGING.md) — structured logging system
-- [Security](documentation/SECURITY.md) — input validation, rate limiting, secrets
-- [Storage](documentation/STORAGE.md) — pluggable session persistence
-- [Cache](documentation/CACHE.md) — caching layer details
-- [Import Export](documentation/IMPORT_EXPORT.md) — backup and restore flows
-- [JSON Schema](documentation/JSON_SCHEMA.md) — schema definitions
-- [MCP Contracts](documentation/MCP_CONTRACTS.md) — MCP protocol contracts
-- [Observability](documentation/OBSERVABILITY.md) — metrics and telemetry
+- [Logging](documentation/LOGGING.md) â€” structured logging system
+- [Security](documentation/SECURITY.md) â€” input validation, rate limiting, secrets
+- [Storage](documentation/STORAGE.md) â€” pluggable session persistence
+- [Cache](documentation/CACHE.md) â€” caching layer details
+- [Import Export](documentation/IMPORT_EXPORT.md) â€” backup and restore flows
+- [JSON Schema](documentation/JSON_SCHEMA.md) â€” schema definitions
+- [MCP Contracts](documentation/MCP_CONTRACTS.md) â€” MCP protocol contracts
+- [Observability](documentation/OBSERVABILITY.md) â€” metrics and telemetry
 
 ### WASM
 
-- [WASM Agent](documentation/WASM_AGENT.md) — agent logic inside the component
-- [WASM Architecture](documentation/WASM_ARCHITECTURE.md) — WASM deployment architecture
-- [Wire Protocol](documentation/WIRE_PROTOCOL.md) — Runtime Bridge HTTP + SSE wire contract
-- [Runtime Bridge Decisions](documentation/DECISIONS_RUNTIME_BRIDGE.md) — Runtime Bridge design decision register
+- [WASM Agent](documentation/WASM_AGENT.md) â€” agent logic inside the component
+- [WASM Architecture](documentation/WASM_ARCHITECTURE.md) â€” WASM deployment architecture
+- [Wire Protocol](documentation/WIRE_PROTOCOL.md) â€” Runtime Bridge HTTP + SSE wire contract
+- [Runtime Bridge Decisions](documentation/DECISIONS_RUNTIME_BRIDGE.md) â€” Runtime Bridge design decision register
 
 ### Process
 
-- [Testing](documentation/TESTING.md) — test strategy and commands
-- [Migration](documentation/MIGRATION.md) — documentation structure history
-- [Deprecation Policy](documentation/DEPRECATION_POLICY.md) — deprecation lifecycle
+- [Testing](documentation/TESTING.md) â€” test strategy and commands
+- [Migration](documentation/MIGRATION.md) â€” documentation structure history
+- [Deprecation Policy](documentation/DEPRECATION_POLICY.md) â€” deprecation lifecycle

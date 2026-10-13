@@ -16,10 +16,10 @@ export default defineConfig({
       allow: [
         resolve(__dirname, ".."),
         /**
-         * The `file:` dependency is a junction to ../../npm/antikythera-sdk; its real path must
+         * The `file:` dependency is a junction to ../../../clients/npm/antikythera-sdk; its real path must
          * be servable in dev (module + .wasm assets).
          */
-        resolve(__dirname, "../../npm"),
+        resolve(__dirname, "../../../clients/npm"),
       ],
     },
   },
@@ -34,7 +34,7 @@ export default defineConfig({
   build: {
     target: 'es2022',
     /**
-     * `antikythera-agent` is a `file:` junction to ../../npm/antikythera-sdk, so its modules
+     * `antikythera-agent` is a `file:` junction to ../../../clients/npm/antikythera-sdk, so its modules
      * resolve to the real path OUTSIDE node_modules and the default CommonJS include
      * (/node_modules/) never converts the CJS runtime bridge. Extend the include to the realpath
      * so Rollup exposes the runtime's named exports (createAgentRuntime, ...).
