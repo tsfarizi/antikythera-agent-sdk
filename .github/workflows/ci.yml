@@ -152,13 +152,13 @@ jobs:
         run: npm install
 
       - name: Build SDK component
-        run: cargo build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo component build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Build toolrunner component
-        run: cargo build -p antikythera-toolrunner --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo component build -p antikythera-toolrunner --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Build default-hooks component
-        run: cargo build -p antikythera-default-hooks --release --target wasm32-wasip2 --no-default-features --features component
+        run: cargo component build -p antikythera-default-hooks --release --target wasm32-wasip2 --no-default-features --features component
 
       - name: Build logic-core-host-example component
         run: cargo build -p logic-core-host-example --release --target wasm32-wasip2 --no-default-features --features component
@@ -172,13 +172,13 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           # wasm-tools compose rejects underscore crate names; use kebab-case copies.
-          cp target/wasm32-wasip2/release/antikythera_toolrunner.wasm \
-            target/wasm32-wasip2/release/antikythera-toolrunner.wasm
-          cp target/wasm32-wasip2/release/antikythera_default_hooks.wasm \
-            target/wasm32-wasip2/release/antikythera-default-hooks.wasm
-          wasm-tools compose target/wasm32-wasip2/release/antikythera_sdk.wasm \
-            -d target/wasm32-wasip2/release/antikythera-toolrunner.wasm \
-            -d target/wasm32-wasip2/release/antikythera-default-hooks.wasm \
+          cp target/wasm32-wasip1/release/antikythera_toolrunner.wasm \
+            target/wasm32-wasip1/release/antikythera-toolrunner.wasm
+          cp target/wasm32-wasip1/release/antikythera_default_hooks.wasm \
+            target/wasm32-wasip1/release/antikythera-default-hooks.wasm
+          wasm-tools compose target/wasm32-wasip1/release/antikythera_sdk.wasm \
+            -d target/wasm32-wasip1/release/antikythera-toolrunner.wasm \
+            -d target/wasm32-wasip1/release/antikythera-default-hooks.wasm \
             -o dist/antikythera-sdk.wasm
 
       - name: Build native server-runtime binary (debug)

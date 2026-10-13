@@ -4,9 +4,9 @@ This directory defines the contract for the **browser/WASM target** of the SDK: 
 
 ## Contract Files
 
-- `browser_function_signatures.golden.txt` — expected exported function signatures (golden file)
-- `../shared/wit_signatures.golden.txt` — WIT signatures for the `runner` interface (reference)
-- `../shared/payload_contract.golden.json` — shared JSON payload key shapes (reference)
+- `browser_function_signatures.golden.txt` â€” expected exported function signatures (golden file)
+- `../shared/wit_signatures.golden.txt` â€” WIT signatures for the `runner` interface (reference)
+- `../shared/payload_contract.golden.json` â€” shared JSON payload key shapes (reference)
 
 The **source of truth for the transpiled output** is the generated TypeScript artifact:
 `clients/npm/antikythera-sdk/component/interfaces/antikythera-agent-sdk-runner.d.ts`
@@ -22,7 +22,7 @@ The **source of truth for the transpiled output** is the generated TypeScript ar
 cargo component build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
 ```
 
-- Transpile to JS bindings (jco emits TypeScript by default; there is no `--dts` flag — use `--no-typescript` only to suppress it):
+- Transpile to JS bindings (jco emits TypeScript by default; there is no `--dts` flag â€” use `--no-typescript` only to suppress it):
 
 ```bash
 npx jco transpile dist/antikythera-sdk.wasm --out-dir clients/npm/antikythera-sdk/component \
@@ -62,7 +62,7 @@ The component exports the `runner` interface (world `antikythera-agent-sdk`, def
 | `resetSession` | `sessionId: string` | `boolean` |
 | `sweepIdleSessions` | `nowUnixMs: bigint \| undefined` | `number` |
 | `registerTools` | `toolsJson: string` | `number` |
-| `getToolsPrompt` | — | `string` |
+| `getToolsPrompt` | â€” | `string` |
 | `setContextPolicy` | `policyJson: string` | `boolean` |
 | `getTelemetrySnapshot` | `sessionId: string` | `string` |
 | `getSloSnapshot` | `sessionId: string` | `string` |

@@ -11,15 +11,22 @@ dotenv:
 
 vars:
   WASM_TARGET: wasm32-wasip2
-  WASM_BINARY: target/{{.WASM_TARGET}}/release/antikythera_sdk.wasm
-  TOOLRUNNER_BINARY: target/{{.WASM_TARGET}}/release/antikythera_toolrunner.wasm
+  # `cargo component build` compiles the core for wasm32-wasip1 and mounts the
+  # WASI preview1 adapter into the final component, so the composable members
+  # land in the wasip1 release dir. The wasip2 release dir only receives the
+  # plain cargo-built copy; composing from it drops the adapter core that the
+  # published jco bundle pins. Logic cores keep using WASM_TARGET: they are
+  # plain cargo builds and are never composed.
+  WASM_COMPONENT_DIR: target/wasm32-wasip1/release
+  WASM_BINARY: '{{.WASM_COMPONENT_DIR}}/antikythera_sdk.wasm'
+  TOOLRUNNER_BINARY: '{{.WASM_COMPONENT_DIR}}/antikythera_toolrunner.wasm'
   # wasm-tools compose rejects crate names with underscores; the toolrunner
   # component must be copied to a kebab-case name before composing.
-  TOOLRUNNER_KEBAB: target/{{.WASM_TARGET}}/release/antikythera-toolrunner.wasm
-  DEFAULT_HOOKS_BINARY: target/{{.WASM_TARGET}}/release/antikythera_default_hooks.wasm
+  TOOLRUNNER_KEBAB: '{{.WASM_COMPONENT_DIR}}/antikythera-toolrunner.wasm'
+  DEFAULT_HOOKS_BINARY: '{{.WASM_COMPONENT_DIR}}/antikythera_default_hooks.wasm'
   # Same kebab-case requirement as the toolrunner: wasm-tools compose rejects
   # the underscore crate name of antikythera_default_hooks.wasm.
-  DEFAULT_HOOKS_KEBAB: target/{{.WASM_TARGET}}/release/antikythera-default-hooks.wasm
+  DEFAULT_HOOKS_KEBAB: '{{.WASM_COMPONENT_DIR}}/antikythera-default-hooks.wasm'
   # Drop-in logic-core components are host-authored: consumed directly as
   # standalone .wasm artifacts, never composed into dist/ (no kebab-case
   # copies needed).
@@ -113,7 +120,7 @@ tasks:
       - wit
     cmds:
       - echo "Building standalone SDK WASM component..."
-      - cargo build -p antikythera-sdk --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo component build -p antikythera-sdk --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK standalone SDK component built: {{.WASM_BINARY}}"'
       - task: size
@@ -122,7 +129,7 @@ tasks:
     desc: Build standalone toolrunner WASM component (wasm32-wasip2, feature component)
     cmds:
       - echo "Building standalone toolrunner WASM component..."
-      - cargo build -p antikythera-toolrunner --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo component build -p antikythera-toolrunner --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK standalone toolrunner component built: {{.TOOLRUNNER_BINARY}}"'
       - task: size
@@ -131,7 +138,7 @@ tasks:
     desc: Build standalone default-hooks WASM component (wasm32-wasip2, feature component)
     cmds:
       - echo "Building standalone default-hooks WASM component..."
-      - cargo build -p antikythera-default-hooks --target {{.WASM_TARGET}} --release --no-default-features --features component
+      - cargo component build -p antikythera-default-hooks --target {{.WASM_TARGET}} --release --no-default-features --features component
       - echo ""
       - 'echo "OK standalone default-hooks component built: {{.DEFAULT_HOOKS_BINARY}}"'
       - task: size

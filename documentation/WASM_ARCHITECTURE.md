@@ -120,11 +120,13 @@ The host-facing interfaces (`prompt-manager`, `mcp-client`, `ffi-server`) plus t
 cargo component build -p antikythera-sdk --release --target wasm32-wasip2 --no-default-features --features component
 cargo component build -p antikythera-toolrunner --release --target wasm32-wasip2 --no-default-features --features component
 cargo component build -p antikythera-default-hooks --release --target wasm32-wasip2 --no-default-features --features component
-cp target/wasm32-wasip2/release/antikythera_toolrunner.wasm target/wasm32-wasip2/release/antikythera-toolrunner.wasm
-cp target/wasm32-wasip2/release/antikythera_default_hooks.wasm target/wasm32-wasip2/release/antikythera-default-hooks.wasm
-wasm-tools compose target/wasm32-wasip2/release/antikythera_sdk.wasm \
-  -d target/wasm32-wasip2/release/antikythera-toolrunner.wasm \
-  -d target/wasm32-wasip2/release/antikythera-default-hooks.wasm \
+# The composable component lands in the wasip1 release dir (preview1 adapter mounted);
+# the wasip2 dir only holds the plain cargo-built copy.
+cp target/wasm32-wasip1/release/antikythera_toolrunner.wasm target/wasm32-wasip1/release/antikythera-toolrunner.wasm
+cp target/wasm32-wasip1/release/antikythera_default_hooks.wasm target/wasm32-wasip1/release/antikythera-default-hooks.wasm
+wasm-tools compose target/wasm32-wasip1/release/antikythera_sdk.wasm \
+  -d target/wasm32-wasip1/release/antikythera-toolrunner.wasm \
+  -d target/wasm32-wasip1/release/antikythera-default-hooks.wasm \
   -o dist/antikythera-sdk.wasm
 ```
 

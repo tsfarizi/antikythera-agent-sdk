@@ -4,6 +4,7 @@
 /book
 *.txt
 !tests/rust/fixtures/contracts/wit_signatures.golden.txt
+!contracts/**/*.golden.txt
 /servers
 .env
 .code-review-graph/

@@ -81,23 +81,23 @@ cargo component build -p antikythera-default-hooks --release --target wasm32-was
 
 The helper binary in `src/scripts/build-component.rs` validates WIT conformance against Rust source types.
 
-Expected component output is produced under:
+Expected component output is produced under (the core is compiled for `wasm32-wasip1` and the preview1 adapter is mounted into the final component; the `wasm32-wasip2` release dir only receives the plain cargo-built copy, which must not be composed):
 
 ```text
-target/wasm32-wasip2/release/
+target/wasm32-wasip1/release/
 ```
 
 Compose into the canonical composite artifact (the component artifacts are copied to kebab-case names first because `wasm-tools compose` rejects underscores):
 
 ```bash
 mkdir -p dist
-cp target/wasm32-wasip2/release/antikythera_toolrunner.wasm \
-  target/wasm32-wasip2/release/antikythera-toolrunner.wasm
-cp target/wasm32-wasip2/release/antikythera_default_hooks.wasm \
-  target/wasm32-wasip2/release/antikythera-default-hooks.wasm
-wasm-tools compose target/wasm32-wasip2/release/antikythera_sdk.wasm \
-  -d target/wasm32-wasip2/release/antikythera-toolrunner.wasm \
-  -d target/wasm32-wasip2/release/antikythera-default-hooks.wasm \
+cp target/wasm32-wasip1/release/antikythera_toolrunner.wasm \
+  target/wasm32-wasip1/release/antikythera-toolrunner.wasm
+cp target/wasm32-wasip1/release/antikythera_default_hooks.wasm \
+  target/wasm32-wasip1/release/antikythera-default-hooks.wasm
+wasm-tools compose target/wasm32-wasip1/release/antikythera_sdk.wasm \
+  -d target/wasm32-wasip1/release/antikythera-toolrunner.wasm \
+  -d target/wasm32-wasip1/release/antikythera-default-hooks.wasm \
   -o dist/antikythera-sdk.wasm
 ```
 
